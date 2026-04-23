@@ -365,7 +365,7 @@
     </section>
 
     <section class="card full">
-      <h2>Supabase 동기화</h2>
+      <h2>KV 동기화 (Upstash/Vercel KV)</h2>
       <div class="cloud-grid">
         <div>
           <label for="syncPin">4자리 PIN</label>
@@ -519,15 +519,13 @@
     </section>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     const STORAGE_KEY = "salary-tracker-records-v2";
     const SCHEDULE_KEY = "salary-tracker-cafe-schedules-v1";
     const EXCLUDED_KEY = "salary-tracker-schedule-excluded-v1";
-    const SUPABASE_CONFIG_KEY = "salary-tracker-supabase-config-v1";
-    const SUPABASE_TABLE = "salary_sync";
-    const DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_LOlAD7wO7xkAGDQAfd0hFA_S3CzCFlk";
-    const DEFAULT_SUPABASE_URL = "https://nuyndlttvzppcfrcjcvc.supabase.co/rest/v1/";
+    const CLOUD_CONFIG_KEY = "salary-tracker-cloud-config-v1";
+    const DEFAULT_UPSTASH_REST_URL = "https://fun-primate-71536.upstash.io";
+    const DEFAULT_UPSTASH_REST_TOKEN = "gQAAAAAAARdwAAIgcDEyNmE5ZWNhZmIyNjE0MTBjODBlYWYzOTAzODc5ZmYyNA";
     const CATEGORY_META = {
       cafe: { label: "카페알바", color: "var(--cafe)" },
       work: { label: "근로", color: "var(--work)" },
@@ -587,7 +585,7 @@
     let selectedCalendarDate = null;
     let isHistoryCollapsed = false;
     let isScheduleFormOpen = false;
-    let supabaseClient = null;
+    let isCloudConnected = false;
     let cloudPushTimer = null;
     let isApplyingRemoteState = false;
 
@@ -616,18 +614,18 @@
       catch (e) { return fallback; }
     }
     function loadCloudConfig() {
-      return safeLoad(SUPABASE_CONFIG_KEY, { pin: "" });
+      return safeLoad(CLOUD_CONFIG_KEY, { pin: "" });
     }
     function readCloudConfigFromInputs() {
       const pin = String(el.syncPin.value || "").trim();
       return {
-        url: DEFAULT_SUPABASE_URL,
+        url: DEFAULT_UPSTASH_REST_URL,
         pin,
         syncKey: pin ? `pin-${pin}` : ""
       };
     }
     function saveCloudConfig(cfg) {
-      localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify(cfg));
+      localStorage.setItem(CLOUD_CONFIG_KEY, JSON.stringify(cfg));
     }
     function setCloudStatus(text, isError) {
       el.cloudStatus.textContent = text;
@@ -649,11 +647,28 @@
       render();
     }
     function queueCloudPush() {
-      if (isApplyingRemoteState || !supabaseClient) return;
+      if (isApplyingRemoteState || !isCloudConnected) return;
       if (cloudPushTimer) clearTimeout(cloudPushTimer);
       cloudPushTimer = setTimeout(() => {
         syncToCloud();
       }, 500);
+    }
+    async function callKvCommand(command) {
+      const endpoint = DEFAULT_UPSTASH_REST_URL.replace(/\/+$/, "");
+      const token = DEFAULT_UPSTASH_REST_TOKEN.trim();
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`
+        },
+        body: JSON.stringify(command)
+      });
+      const payload = await response.json();
+      if (!response.ok || payload.error) {
+        throw new Error(payload.error || `HTTP ${response.status}`);
+      }
+      return payload.result;
     }
     async function connectCloud() {
       const { url, pin, syncKey } = readCloudConfigFromInputs();
@@ -665,58 +680,54 @@
         setCloudStatus("PIN은 숫자 4자리여야 합니다.", true);
         return false;
       }
-      if (!window.supabase || !window.supabase.createClient) {
-        setCloudStatus("Supabase 라이브러리를 불러오지 못했습니다.", true);
+      if (!DEFAULT_UPSTASH_REST_URL || !DEFAULT_UPSTASH_REST_TOKEN) {
+        setCloudStatus("코드 상단의 Upstash URL/TOKEN 설정이 필요합니다.", true);
         return false;
       }
-      const baseUrl = url.replace(/\/rest\/v1\/?$/, "");
-      supabaseClient = window.supabase.createClient(baseUrl, DEFAULT_SUPABASE_ANON_KEY.trim());
+      if (!url) {
+        setCloudStatus("Upstash URL 설정이 비어 있습니다.", true);
+        return false;
+      }
       saveCloudConfig({ pin });
-      setCloudStatus("Supabase 연결 완료", false);
+      isCloudConnected = true;
+      setCloudStatus("KV 연결 완료", false);
       return true;
     }
     async function syncFromCloud() {
-      if (!supabaseClient && !(await connectCloud())) return;
+      if (!isCloudConnected && !(await connectCloud())) return;
       const cfg = readCloudConfigFromInputs();
       if (!cfg.syncKey) {
-        setCloudStatus("동기화 키를 입력해주세요.", true);
+        setCloudStatus("4자리 PIN을 입력해주세요.", true);
         return;
       }
-      const { data, error } = await supabaseClient
-        .from(SUPABASE_TABLE)
-        .select("payload")
-        .eq("sync_key", cfg.syncKey)
-        .maybeSingle();
-      if (error) {
+      try {
+        const raw = await callKvCommand(["GET", cfg.syncKey]);
+        if (!raw) {
+          setCloudStatus("클라우드 데이터가 없어 현재 데이터를 기준으로 시작합니다.", false);
+          return;
+        }
+        const data = typeof raw === "string" ? JSON.parse(raw) : raw;
+        applyState(data);
+        setCloudStatus("클라우드 데이터 불러오기 완료", false);
+      } catch (error) {
         setCloudStatus(`불러오기 실패: ${error.message}`, true);
         return;
       }
-      if (!data || !data.payload) {
-        setCloudStatus("클라우드 데이터가 없어 현재 데이터를 기준으로 시작합니다.", false);
-        return;
-      }
-      applyState(data.payload);
-      setCloudStatus("클라우드 데이터 불러오기 완료", false);
     }
     async function syncToCloud() {
-      if (!supabaseClient && !(await connectCloud())) return;
+      if (!isCloudConnected && !(await connectCloud())) return;
       const cfg = readCloudConfigFromInputs();
       if (!cfg.syncKey) {
-        setCloudStatus("동기화 키를 입력해주세요.", true);
+        setCloudStatus("4자리 PIN을 입력해주세요.", true);
         return;
       }
       const payload = collectState();
-      const { error } = await supabaseClient
-        .from(SUPABASE_TABLE)
-        .upsert(
-          { sync_key: cfg.syncKey, payload, updated_at: new Date().toISOString() },
-          { onConflict: "sync_key" }
-        );
-      if (error) {
+      try {
+        await callKvCommand(["SET", cfg.syncKey, JSON.stringify(payload)]);
+        setCloudStatus("클라우드 저장 완료", false);
+      } catch (error) {
         setCloudStatus(`저장 실패: ${error.message}`, true);
-        return;
       }
-      setCloudStatus("클라우드 저장 완료", false);
     }
     function loadRecords() { return safeLoad(STORAGE_KEY, []); }
     function saveRecords(records) {
@@ -1136,7 +1147,7 @@
         const categories = groupedByDate[date] ? Array.from(groupedByDate[date]) : [];
         const cell = document.createElement("div");
         cell.className = "day";
-        if (categories.length > 0) cell.classList.add("clickable");
+        cell.classList.add("clickable");
         if (selectedCalendarDate === date) cell.classList.add("selected");
         cell.innerHTML = `<div class="day-num">${day}</div><div class="markers"></div>`;
         const markers = cell.querySelector(".markers");
@@ -1146,13 +1157,11 @@
           m.style.background = CATEGORY_META[cat].color;
           markers.appendChild(m);
         });
-        if (categories.length > 0) {
-          cell.addEventListener("click", () => {
-            selectedCalendarDate = date;
-            el.workDate.value = date;
-            render();
-          });
-        }
+        cell.addEventListener("click", () => {
+          selectedCalendarDate = date;
+          el.workDate.value = date;
+          render();
+        });
         el.calendar.appendChild(cell);
       }
     }
@@ -1288,7 +1297,7 @@
     function init() {
       const cfg = loadCloudConfig();
       el.syncPin.value = cfg.pin || "";
-      setCloudStatus("Supabase 미연결", false);
+      setCloudStatus("KV 미연결", false);
       el.workDate.value = getTodayISO();
       el.monthPicker.value = getCurrentMonthValue();
       el.categoryButtons.forEach((btn) => {
