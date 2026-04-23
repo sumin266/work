@@ -588,6 +588,9 @@
     let isCloudConnected = false;
     let cloudPushTimer = null;
     let isApplyingRemoteState = false;
+    let cloudPulledForCurrentPin = false;
+    let cloudOverwriteConfirmedForCurrentPin = false;
+    let currentCloudSyncKey = "";
 
     function fmtMoney(value) { return `${Math.round(value).toLocaleString("ko-KR")}원`; }
     function pad(n) { return String(n).padStart(2, "0"); }
@@ -648,6 +651,7 @@
     }
     function queueCloudPush() {
       if (isApplyingRemoteState || !isCloudConnected) return;
+      if (!cloudPulledForCurrentPin && !cloudOverwriteConfirmedForCurrentPin) return;
       if (cloudPushTimer) clearTimeout(cloudPushTimer);
       cloudPushTimer = setTimeout(() => {
         syncToCloud();
@@ -690,6 +694,11 @@
       }
       saveCloudConfig({ pin });
       isCloudConnected = true;
+      if (currentCloudSyncKey !== syncKey) {
+        currentCloudSyncKey = syncKey;
+        cloudPulledForCurrentPin = false;
+        cloudOverwriteConfirmedForCurrentPin = false;
+      }
       setCloudStatus("KV 연결 완료", false);
       return true;
     }
@@ -703,11 +712,13 @@
       try {
         const raw = await callKvCommand(["GET", cfg.syncKey]);
         if (!raw) {
+          cloudPulledForCurrentPin = true;
           setCloudStatus("클라우드 데이터가 없어 현재 데이터를 기준으로 시작합니다.", false);
           return;
         }
         const data = typeof raw === "string" ? JSON.parse(raw) : raw;
         applyState(data);
+        cloudPulledForCurrentPin = true;
         setCloudStatus("클라우드 데이터 불러오기 완료", false);
       } catch (error) {
         setCloudStatus(`불러오기 실패: ${error.message}`, true);
@@ -720,6 +731,14 @@
       if (!cfg.syncKey) {
         setCloudStatus("4자리 PIN을 입력해주세요.", true);
         return;
+      }
+      if (!cloudPulledForCurrentPin && !cloudOverwriteConfirmedForCurrentPin) {
+        const ok = window.confirm("아직 불러오기를 하지 않았습니다. 저장하면 기존 클라우드 데이터가 덮어써질 수 있어요. 계속할까요?");
+        if (!ok) {
+          setCloudStatus("저장을 취소했습니다. 먼저 불러오기를 눌러주세요.", true);
+          return;
+        }
+        cloudOverwriteConfirmedForCurrentPin = true;
       }
       const payload = collectState();
       try {
@@ -1367,6 +1386,12 @@
       el.nextMonthBtn.addEventListener("click", () => moveMonthBy(1));
       el.historyStartDate.addEventListener("change", render);
       el.historyEndDate.addEventListener("change", render);
+      el.syncPin.addEventListener("input", () => {
+        cloudPulledForCurrentPin = false;
+        cloudOverwriteConfirmedForCurrentPin = false;
+        currentCloudSyncKey = "";
+        isCloudConnected = false;
+      });
       el.clearHistoryFilterBtn.addEventListener("click", () => {
         el.historyStartDate.value = "";
         el.historyEndDate.value = "";
