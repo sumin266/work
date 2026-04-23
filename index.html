@@ -160,6 +160,9 @@
       outline: 2px solid #111827;
       outline-offset: -2px;
     }
+    .day.drop-target {
+      box-shadow: inset 0 0 0 2px #111827;
+    }
     .dow, .day {
       border: 1px solid var(--line);
       border-radius: 10px;
@@ -263,6 +266,13 @@
       border-bottom: 1px solid var(--line);
       padding: 8px 0;
       font-size: 13px;
+    }
+    .day-record-item.draggable {
+      cursor: grab;
+    }
+    .day-record-item.dragging {
+      opacity: 0.55;
+      border-style: dashed;
     }
     .day-record-item:last-child {
       border-bottom: 0;
@@ -461,11 +471,11 @@
     </section>
 
     <section id="scheduleSection" class="card">
-      <h2>카페알바 정기 스케줄</h2>
+      <h2 id="scheduleTitle">정기 스케줄</h2>
       <div id="scheduleForm" class="schedule-form-collapsed">
-        <label for="scheduleInput">정기 입력 (요일 HMM)</label>
+        <label id="scheduleInputLabel" for="scheduleInput">정기 입력 (요일 HMM)</label>
         <input id="scheduleInput" type="text" />
-        <label for="scheduleWorkRange">근무 시간 메모</label>
+        <label id="scheduleWorkRangeLabel" for="scheduleWorkRange">근무 시간 메모</label>
         <input id="scheduleWorkRange" type="text" />
         <button id="saveScheduleBtn" type="button">등록 저장</button>
       </div>
@@ -537,6 +547,7 @@
   <script>
     const STORAGE_KEY = "salary-tracker-records-v2";
     const SCHEDULE_KEY = "salary-tracker-cafe-schedules-v1";
+    const WORK_SCHEDULE_KEY = "salary-tracker-work-schedules-v1";
     const EXCLUDED_KEY = "salary-tracker-schedule-excluded-v1";
     const CLOUD_CONFIG_KEY = "salary-tracker-cloud-config-v1";
     const DEFAULT_UPSTASH_REST_URL = "https://fun-primate-71536.upstash.io";
@@ -570,6 +581,9 @@
       helper: document.getElementById("helper"),
       categoryButtons: Array.from(document.querySelectorAll("button[data-category]")),
       scheduleInput: document.getElementById("scheduleInput"),
+      scheduleTitle: document.getElementById("scheduleTitle"),
+      scheduleInputLabel: document.getElementById("scheduleInputLabel"),
+      scheduleWorkRangeLabel: document.getElementById("scheduleWorkRangeLabel"),
       scheduleWorkRange: document.getElementById("scheduleWorkRange"),
       scheduleForm: document.getElementById("scheduleForm"),
       scheduleSection: document.getElementById("scheduleSection"),
@@ -804,6 +818,11 @@
       localStorage.setItem(EXCLUDED_KEY, JSON.stringify(items));
       queueCloudPush();
     }
+    function loadWorkSchedules() { return safeLoad(WORK_SCHEDULE_KEY, []); }
+    function saveWorkSchedules(schedules) {
+      localStorage.setItem(WORK_SCHEDULE_KEY, JSON.stringify(schedules));
+      queueCloudPush();
+    }
     function minutesToText(mins) { return `${Math.floor(mins / 60)}시간 ${mins % 60}분`; }
     function normalizeRangeText(text) { return String(text).replace(/\s+/g, ""); }
 
@@ -935,6 +954,9 @@
       if (minutes == null || minutes <= 0) return null;
       return { weekday, minutes };
     }
+    function getActiveScheduleCategory() {
+      return el.category.value === "work" ? "work" : "cafe";
+    }
 
     function formatMinutesToCafeInput(mins) {
       const total = Number(mins) || 0;
@@ -979,10 +1001,20 @@
       el.cafeFields.style.display = category === "cafe" ? "grid" : "none";
       el.workFields.style.display = category === "work" ? "block" : "none";
       el.amountField.style.display = category === "side" ? "block" : "none";
-      el.scheduleSection.style.display = category === "cafe" ? "block" : "none";
-      if (category !== "cafe") {
+      const scheduleVisible = category === "cafe" || category === "work";
+      el.scheduleSection.style.display = scheduleVisible ? "block" : "none";
+      if (!scheduleVisible) {
         isScheduleFormOpen = false;
         renderScheduleFormVisibility();
+      }
+      if (category === "work") {
+        el.scheduleTitle.textContent = "근로 정기 스케줄";
+        el.scheduleInputLabel.textContent = "정기 입력 (요일 + 실근무 HMM)";
+        el.scheduleWorkRangeLabel.textContent = "출근부 기재 시간";
+      } else {
+        el.scheduleTitle.textContent = "카페알바 정기 스케줄";
+        el.scheduleInputLabel.textContent = "정기 입력 (요일 HMM)";
+        el.scheduleWorkRangeLabel.textContent = "근무 시간 메모";
       }
       if (category === "work") {
         el.helper.textContent = "근로는 실 근무 시간을 기준으로 급여 계산합니다.";
@@ -1047,6 +1079,17 @@
       render();
     }
 
+    function moveRecordToDate(id, newDate) {
+      const records = loadRecords();
+      const idx = records.findIndex((r) => r.id === id);
+      if (idx < 0 || !newDate) return;
+      records[idx] = { ...records[idx], date: newDate };
+      saveRecords(records);
+      selectedCalendarDate = newDate;
+      el.workDate.value = newDate;
+      render();
+    }
+
     function updateRecord(id, updates, forceManual) {
       const records = loadRecords();
       const idx = records.findIndex((r) => r.id === id);
@@ -1067,21 +1110,37 @@
       el.attendanceRange.value = "";
     }
 
-    function addCafeSchedule() {
+    function addSchedule() {
+      const active = getActiveScheduleCategory();
       const parsed = parseWeekdayAndTimeInput(el.scheduleInput.value);
-      const workRangeParsed = el.scheduleWorkRange.value ? parseTimeRange(el.scheduleWorkRange.value) : null;
-      if (!parsed) return alert("정기 입력 형식을 확인해주세요. 예: 월 945 또는 화9");
-      if (el.scheduleWorkRange.value && !workRangeParsed) {
-        return alert("근무 시간 메모 형식을 확인해주세요. 예: 오전9-오후6, 9:30-18:00");
+      if (!parsed) return alert("정기 입력 형식을 확인해주세요.");
+      if (active === "cafe") {
+        const workRangeParsed = el.scheduleWorkRange.value ? parseTimeRange(el.scheduleWorkRange.value) : null;
+        if (el.scheduleWorkRange.value && !workRangeParsed) {
+          return alert("근무 시간 메모 형식을 확인해주세요.");
+        }
+        const schedules = loadSchedules();
+        schedules.push({
+          id: `cafe-${crypto.randomUUID()}`,
+          weekday: parsed.weekday,
+          minutes: parsed.minutes,
+          workRange: workRangeParsed ? workRangeParsed.normalized : ""
+        });
+        saveSchedules(schedules);
+      } else {
+        const attendanceParsed = el.scheduleWorkRange.value ? parseMultipleTimeRanges(el.scheduleWorkRange.value) : null;
+        if (el.scheduleWorkRange.value && !attendanceParsed) {
+          return alert("출근부 기재 시간 형식을 확인해주세요. 여러 구간은 콤마로 구분합니다.");
+        }
+        const schedules = loadWorkSchedules();
+        schedules.push({
+          id: `work-${crypto.randomUUID()}`,
+          weekday: parsed.weekday,
+          actualMinutes: parsed.minutes,
+          attendanceRange: attendanceParsed ? attendanceParsed.normalized : `동일(${minutesToText(parsed.minutes)})`
+        });
+        saveWorkSchedules(schedules);
       }
-      const schedules = loadSchedules();
-      schedules.push({
-        id: crypto.randomUUID(),
-        weekday: parsed.weekday,
-        minutes: parsed.minutes,
-        workRange: workRangeParsed ? workRangeParsed.normalized : ""
-      });
-      saveSchedules(schedules);
       el.scheduleInput.value = "";
       el.scheduleWorkRange.value = "";
       isScheduleFormOpen = false;
@@ -1094,8 +1153,12 @@
       el.addScheduleBtn.textContent = isScheduleFormOpen ? "정기 스케줄 등록 닫기" : "정기 스케줄 등록";
     }
 
-    function removeCafeSchedule(id) {
-      saveSchedules(loadSchedules().filter((s) => s.id !== id));
+    function removeSchedule(id, category) {
+      if (category === "work") {
+        saveWorkSchedules(loadWorkSchedules().filter((s) => s.id !== id));
+      } else {
+        saveSchedules(loadSchedules().filter((s) => s.id !== id));
+      }
       saveExcluded(loadExcluded().filter((x) => !x.startsWith(`${id}|`)));
       saveRecords(loadRecords().filter((r) => r.scheduleId !== id));
       render();
@@ -1136,9 +1199,45 @@
       render();
       alert("정기 스케줄 자동 반영이 완료되었습니다.");
     }
+    function applyWorkSchedulesToMonth() {
+      const monthValue = el.monthPicker.value;
+      const schedules = loadWorkSchedules();
+      if (!monthValue || schedules.length === 0) return alert("조회 월 또는 정기 스케줄을 확인해주세요.");
+      const [year, month] = monthValue.split("-").map(Number);
+      const lastDate = new Date(year, month, 0).getDate();
+      const records = loadRecords();
+      const excluded = new Set(loadExcluded());
+      const existingKey = new Set(records.map((r) => `${r.date}|${r.scheduleId || ""}|${r.category}`));
+
+      schedules.forEach((s) => {
+        for (let day = 1; day <= lastDate; day++) {
+          const dateObj = new Date(year, month - 1, day);
+          if (dateObj.getDay() !== s.weekday) continue;
+          const date = `${monthValue}-${pad(day)}`;
+          const exKey = `${s.id}|${date}`;
+          const key = `${date}|${s.id}|work`;
+          if (excluded.has(exKey) || existingKey.has(key)) continue;
+          records.push({
+            id: crypto.randomUUID(),
+            date,
+            category: "work",
+            actualMinutes: s.actualMinutes,
+            attendanceRange: s.attendanceRange || `동일(${minutesToText(s.actualMinutes)})`,
+            generatedBySchedule: true,
+            scheduleId: s.id
+          });
+          existingKey.add(key);
+        }
+      });
+
+      saveRecords(records);
+      render();
+      alert("근로 정기 스케줄 자동 반영이 완료되었습니다.");
+    }
 
     function renderSchedules() {
-      const schedules = loadSchedules();
+      const active = getActiveScheduleCategory();
+      const schedules = active === "work" ? loadWorkSchedules() : loadSchedules();
       el.scheduleList.innerHTML = "";
       if (schedules.length === 0) {
         el.scheduleList.innerHTML = `<span class="small">등록된 스케줄이 없습니다.</span>`;
@@ -1147,12 +1246,17 @@
       schedules.forEach((s) => {
         const chip = document.createElement("span");
         chip.className = "chip";
-        const workRangeText = s.workRange ? ` (${s.workRange})` : "";
-        chip.innerHTML = `${WEEKDAY_LABEL[s.weekday]}요일 ${minutesToText(s.minutes)}${workRangeText} <button data-id="${s.id}" type="button">삭제</button>`;
+        if (active === "work") {
+          const attendanceText = s.attendanceRange ? ` / ${s.attendanceRange}` : "";
+          chip.innerHTML = `${WEEKDAY_LABEL[s.weekday]}요일 실근무 ${minutesToText(s.actualMinutes)}${attendanceText} <button data-id="${s.id}" data-cat="work" type="button">삭제</button>`;
+        } else {
+          const workRangeText = s.workRange ? ` (${s.workRange})` : "";
+          chip.innerHTML = `${WEEKDAY_LABEL[s.weekday]}요일 ${minutesToText(s.minutes)}${workRangeText} <button data-id="${s.id}" data-cat="cafe" type="button">삭제</button>`;
+        }
         el.scheduleList.appendChild(chip);
       });
       Array.from(el.scheduleList.querySelectorAll("button[data-id]")).forEach((btn) => {
-        btn.addEventListener("click", () => removeCafeSchedule(btn.dataset.id));
+        btn.addEventListener("click", () => removeSchedule(btn.dataset.id, btn.dataset.cat));
       });
     }
 
@@ -1236,6 +1340,7 @@
         const categories = groupedByDate[date] ? Array.from(groupedByDate[date]) : [];
         const cell = document.createElement("div");
         cell.className = "day";
+        cell.dataset.date = date;
         cell.classList.add("clickable");
         if (selectedCalendarDate === date) cell.classList.add("selected");
         cell.innerHTML = `<div class="day-num">${day}</div><div class="markers"></div>`;
@@ -1250,6 +1355,20 @@
           selectedCalendarDate = date;
           el.workDate.value = date;
           render();
+        });
+        cell.addEventListener("dragover", (e) => {
+          e.preventDefault();
+          cell.classList.add("drop-target");
+        });
+        cell.addEventListener("dragleave", () => {
+          cell.classList.remove("drop-target");
+        });
+        cell.addEventListener("drop", (e) => {
+          e.preventDefault();
+          cell.classList.remove("drop-target");
+          const recordId = e.dataTransfer.getData("text/plain");
+          if (!recordId) return;
+          moveRecordToDate(recordId, date);
         });
         el.calendar.appendChild(cell);
       }
@@ -1285,7 +1404,9 @@
               <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="sideMemo" type="text" value="${record.sideMemo || ""}" />
             `;
         const row = document.createElement("div");
-        row.className = "day-record-item";
+        row.className = "day-record-item draggable";
+        row.draggable = true;
+        row.dataset.recordId = record.id;
         row.innerHTML = `
           <div>
             <span class="tag"><i class="dot" style="background:${meta.color}"></i>${meta.label}</span>
@@ -1297,6 +1418,15 @@
             <button type="button" class="day-record-delete" data-id="${record.id}">삭제</button>
           </div>
         `;
+        row.addEventListener("dragstart", (e) => {
+          e.dataTransfer.setData("text/plain", record.id);
+          e.dataTransfer.effectAllowed = "move";
+          row.classList.add("dragging");
+        });
+        row.addEventListener("dragend", () => {
+          row.classList.remove("dragging");
+          Array.from(el.calendar.querySelectorAll(".day.drop-target")).forEach((d) => d.classList.remove("drop-target"));
+        });
         el.calendarRecordPanel.appendChild(row);
       });
       Array.from(el.calendarRecordPanel.querySelectorAll("button[data-id]")).forEach((btn) => {
@@ -1424,8 +1554,14 @@
         isScheduleFormOpen = !isScheduleFormOpen;
         renderScheduleFormVisibility();
       });
-      el.saveScheduleBtn.addEventListener("click", addCafeSchedule);
-      el.applyScheduleBtn.addEventListener("click", applyCafeSchedulesToMonth);
+      el.saveScheduleBtn.addEventListener("click", addSchedule);
+      el.applyScheduleBtn.addEventListener("click", () => {
+        if (getActiveScheduleCategory() === "work") {
+          applyWorkSchedulesToMonth();
+        } else {
+          applyCafeSchedulesToMonth();
+        }
+      });
       el.prevMonthBtn.addEventListener("click", () => moveMonthBy(-1));
       el.nextMonthBtn.addEventListener("click", () => moveMonthBy(1));
       el.historyStartDate.addEventListener("change", render);
