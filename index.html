@@ -320,7 +320,6 @@
     .week-nav-buttons {
       display: flex;
       gap: 8px;
-      margin-bottom: 10px;
     }
     .week-nav-buttons button {
       width: auto;
@@ -329,6 +328,22 @@
     }
     .history-filter > div {
       min-width: 150px;
+    }
+    .history-week-summary {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      font-size: 13px;
+      color: #374151;
+      justify-content: flex-end;
+      text-align: right;
+    }
+    .history-top-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
     }
     .history-toggle-btn {
       width: auto;
@@ -512,9 +527,16 @@
         <button id="toggleHistoryBtn" type="button" class="history-toggle-btn">▼</button>
       </div>
       <div id="historyControls">
-        <div class="week-nav-buttons">
-          <button id="prevWeekBtn" type="button">저번주</button>
-          <button id="nextWeekBtn" type="button">다음주</button>
+        <div class="history-top-row">
+          <div class="week-nav-buttons">
+            <button id="prevWeekBtn" type="button">저번주</button>
+            <button id="nextWeekBtn" type="button">다음주</button>
+          </div>
+          <div class="history-week-summary">
+            <span id="historyCafeTime">카페: 0시간 0분</span>
+            <span id="historyWorkTime">근로: 0시간 0분</span>
+            <span id="historyTotalTime">총합: 0시간 0분</span>
+          </div>
         </div>
         <div class="history-filter">
           <div>
@@ -608,6 +630,9 @@
       historyStartDate: document.getElementById("historyStartDate"),
       historyEndDate: document.getElementById("historyEndDate"),
       clearHistoryFilterBtn: document.getElementById("clearHistoryFilterBtn"),
+      historyCafeTime: document.getElementById("historyCafeTime"),
+      historyWorkTime: document.getElementById("historyWorkTime"),
+      historyTotalTime: document.getElementById("historyTotalTime"),
       calendarRecordPanel: document.getElementById("calendarRecordPanel"),
       calendarMonthTitle: document.getElementById("calendarMonthTitle"),
       prevMonthBtn: document.getElementById("prevMonthBtn"),
@@ -1294,6 +1319,19 @@
       });
     }
 
+    function renderHistoryWeekSummary(filteredRecords) {
+      let cafeMinutes = 0;
+      let workMinutes = 0;
+      filteredRecords.forEach((record) => {
+        if (record.category === "cafe") cafeMinutes += Number(record.minutes) || 0;
+        if (record.category === "work") workMinutes += getActualWorkMinutes(record);
+      });
+      const total = cafeMinutes + workMinutes;
+      el.historyCafeTime.textContent = `카페: ${minutesToText(cafeMinutes)}`;
+      el.historyWorkTime.textContent = `근로: ${minutesToText(workMinutes)}`;
+      el.historyTotalTime.textContent = `총합: ${minutesToText(total)}`;
+    }
+
     function applyHistoryDateFilter(records) {
       const start = el.historyStartDate.value;
       const end = el.historyEndDate.value;
@@ -1514,6 +1552,7 @@
       renderCalendar(monthFiltered, monthValue);
       renderCalendarRecordPanel(monthFiltered, minimumWage, monthValue);
       renderHistory(historyFiltered, minimumWage);
+      renderHistoryWeekSummary(historyFiltered);
       renderHistoryVisibility();
       renderScheduleFormVisibility();
       renderSchedules();
