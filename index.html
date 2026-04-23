@@ -602,6 +602,17 @@
       const d = new Date();
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
     }
+    function getCurrentWeekRangeISO() {
+      const now = new Date();
+      const day = now.getDay(); // 0: Sun ... 6: Sat
+      const diffToMonday = day === 0 ? -6 : 1 - day;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() + diffToMonday);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      return { start: toISO(monday), end: toISO(sunday) };
+    }
     function formatMonthTitle(monthValue) {
       const [year, month] = monthValue.split("-").map(Number);
       return `${year}년 ${pad(month)}월`;
@@ -1355,6 +1366,9 @@
       setCloudStatus("KV 미연결", false);
       el.workDate.value = getTodayISO();
       el.monthPicker.value = getCurrentMonthValue();
+      const week = getCurrentWeekRangeISO();
+      el.historyStartDate.value = week.start;
+      el.historyEndDate.value = week.end;
       el.categoryButtons.forEach((btn) => {
         btn.addEventListener("click", () => {
           el.category.value = btn.dataset.category;
