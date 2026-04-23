@@ -432,9 +432,9 @@
       </div>
 
       <div id="workFields" style="display:none;">
-        <label for="actualRange">실 근무 시간</label>
+        <label for="actualRange">실 근무 시간 (H 또는 HMM)</label>
         <input id="actualRange" type="text" />
-        <label for="attendanceRange" style="margin-top:10px;">출근부 기재 시간</label>
+        <label for="attendanceRange" style="margin-top:10px;">출근부 기재 시간 (여러 구간은 콤마)</label>
         <input id="attendanceRange" type="text" />
       </div>
 
@@ -830,6 +830,25 @@
       return parsed ? parsed.minutes : null;
     }
 
+    function parseMultipleTimeRanges(text) {
+      const raw = String(text || "").trim();
+      if (!raw) return null;
+      const parts = raw.split(",").map((p) => p.trim()).filter(Boolean);
+      if (parts.length === 0) return null;
+      const parsedParts = [];
+      let total = 0;
+      for (const part of parts) {
+        const parsed = parseTimeRange(part);
+        if (!parsed) return null;
+        parsedParts.push(parsed.normalized);
+        total += parsed.minutes;
+      }
+      return {
+        minutes: total,
+        normalized: parsedParts.join(", ")
+      };
+    }
+
     function parseCafeTimeToMinutes(text) {
       const digits = String(text || "").replace(/\D/g, "");
       if (digits.length === 1) {
@@ -865,9 +884,14 @@
       return `${h}${pad(m)}`;
     }
 
+    function getActualWorkMinutes(record) {
+      if (record.actualMinutes != null) return Number(record.actualMinutes) || 0;
+      return parseTimeRangeToMinutes(record.actualRange || "") || 0;
+    }
+
     function getCategoryInputText(record) {
       if (record.category === "cafe") return minutesToText(record.minutes || 0);
-      if (record.category === "work") return record.actualRange || "-";
+      if (record.category === "work") return minutesToText(getActualWorkMinutes(record));
       return fmtMoney(record.amount || 0);
     }
 
@@ -882,7 +906,7 @@
         const net = gross - tax;
         return { pay: net, resultText: `${fmtMoney(net)} (세금 ${fmtMoney(tax)} 차감)` };
       }
-      const workMinutes = parseTimeRangeToMinutes(record.actualRange || "");
+      const workMinutes = getActualWorkMinutes(record);
       const gross = ((workMinutes || 0) / 60) * minimumWage;
       return { pay: gross, resultText: fmtMoney(gross) };
     }
@@ -924,14 +948,14 @@
         }
         newRecord.minutes = totalMinutes;
       } else if (category === "work") {
-        const actualParsed = parseTimeRange(el.actualRange.value);
+        const actualMinutes = parseCafeTimeToMinutes(el.actualRange.value);
         const attendanceParsed = el.attendanceRange.value
-          ? parseTimeRange(el.attendanceRange.value)
-          : actualParsed;
-        if (!actualParsed) return alert("실 근무 시간을 형식에 맞게 입력해주세요. 예: 오전9-오후6, 9:30-18:00");
-        if (!attendanceParsed) return alert("출근부 기재 시간을 형식에 맞게 입력해주세요. 예: 오전9-오후6, 9-17");
-        newRecord.actualRange = actualParsed.normalized;
-        newRecord.attendanceRange = attendanceParsed.normalized;
+          ? parseMultipleTimeRanges(el.attendanceRange.value)
+          : null;
+        if (!actualMinutes || actualMinutes <= 0) return alert("실 근무 시간은 H 또는 HMM 형식으로 입력해주세요.");
+        if (el.attendanceRange.value && !attendanceParsed) return alert("출근부 기재 시간 형식을 확인해주세요. 구간 여러개는 콤마로 구분합니다.");
+        newRecord.actualMinutes = actualMinutes;
+        newRecord.attendanceRange = attendanceParsed ? attendanceParsed.normalized : `동일(${minutesToText(actualMinutes)})`;
       } else {
         const amount = Number(el.sideAmount.value) || 0;
         if (amount <= 0) return alert("부업 금액을 입력해주세요.");
@@ -976,6 +1000,11 @@
       records[idx] = { ...target, ...updates };
       saveRecords(records);
       render();
+    }
+
+    function clearWorkDraftInputs() {
+      el.actualRange.value = "";
+      el.attendanceRange.value = "";
     }
 
     function addCafeSchedule() {
@@ -1078,7 +1107,7 @@
         const result = computeEntry(record, minimumWage);
         let memo = "-";
         if (record.category === "work") {
-          memo = `실근무: ${record.actualRange}<br>출근부: ${record.attendanceRange}`;
+          memo = `실근무: ${minutesToText(getActualWorkMinutes(record))}<br>출근부: ${record.attendanceRange}`;
         } else if (record.category === "side" && record.sideMemo) {
           memo = record.sideMemo;
         } else if (record.generatedBySchedule) {
@@ -1188,8 +1217,8 @@
           ? `<input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="cafeTime" type="text" value="${formatMinutesToCafeInput(record.minutes)}" />`
           : record.category === "work"
             ? `
-              <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="actualRange" type="text" value="${record.actualRange || ""}" />
-              <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="attendanceRange" type="text" value="${record.attendanceRange || ""}" />
+              <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="actualRange" type="text" value="${formatMinutesToCafeInput(getActualWorkMinutes(record))}" />
+              <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="attendanceRange" type="text" value="${String(record.attendanceRange || "").startsWith("동일(") ? "" : (record.attendanceRange || "")}" />
             `
             : `
               <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="amount" type="number" min="0" value="${record.amount || 0}" />
@@ -1228,12 +1257,19 @@
           if (target.category === "work") {
             const actualInput = el.calendarRecordPanel.querySelector(`[data-edit-id="${id}"][data-edit-field="actualRange"]`);
             const attendanceInput = el.calendarRecordPanel.querySelector(`[data-edit-id="${id}"][data-edit-field="attendanceRange"]`);
-            const actualParsed = parseTimeRange(actualInput ? actualInput.value : "");
+            const actualMinutes = parseCafeTimeToMinutes(actualInput ? actualInput.value : "");
             const attendanceValue = attendanceInput ? attendanceInput.value : "";
-            const attendanceParsed = attendanceValue ? parseTimeRange(attendanceValue) : actualParsed;
-            if (!actualParsed) return alert("실근무 시간을 예: 오전9-오후6 또는 9:30-18:00 형식으로 입력해주세요.");
-            if (!attendanceParsed) return alert("출근부 시간을 예: 오전9-오후6 또는 9-17 형식으로 입력해주세요.");
-            updateRecord(id, { actualRange: actualParsed.normalized, attendanceRange: attendanceParsed.normalized }, true);
+            const attendanceParsed = attendanceValue ? parseMultipleTimeRanges(attendanceValue) : null;
+            if (!actualMinutes || actualMinutes <= 0) return alert("실근무 시간은 H 또는 HMM 형식으로 입력해주세요.");
+            if (attendanceValue && !attendanceParsed) return alert("출근부 시간 형식을 확인해주세요. 여러 구간은 콤마로 구분합니다.");
+            updateRecord(
+              id,
+              {
+                actualMinutes,
+                attendanceRange: attendanceParsed ? attendanceParsed.normalized : `동일(${minutesToText(actualMinutes)})`
+              },
+              true
+            );
             return;
           }
           const amountInput = el.calendarRecordPanel.querySelector(`[data-edit-id="${id}"][data-edit-field="amount"]`);
@@ -1259,7 +1295,7 @@
         }
         if (record.category === "work") {
           workTotal += pay;
-          workWorkMinutes += parseTimeRangeToMinutes(record.actualRange || "") || 0;
+          workWorkMinutes += getActualWorkMinutes(record);
         }
         if (record.category === "side") sideTotal += pay;
       });
@@ -1308,6 +1344,9 @@
       });
       el.minimumWage.addEventListener("input", render);
       el.monthPicker.addEventListener("change", render);
+      el.workDate.addEventListener("change", () => {
+        if (el.category.value === "work") clearWorkDraftInputs();
+      });
       el.connectCloudBtn.addEventListener("click", async () => {
         await connectCloud();
       });
