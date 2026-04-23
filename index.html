@@ -307,6 +307,16 @@
       align-items: end;
       margin-bottom: 10px;
     }
+    .week-nav-buttons {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .week-nav-buttons button {
+      width: auto;
+      padding: 8px 12px;
+      background: #374151;
+    }
     .history-filter > div {
       min-width: 150px;
     }
@@ -344,6 +354,7 @@
       .wrap { grid-template-columns: 1fr; }
       .result-grid { grid-template-columns: 1fr 1fr; }
       .row-3, .row, .cloud-grid { grid-template-columns: 1fr; }
+      .calendar-month-title { font-size: 20px; }
     }
   </style>
 </head>
@@ -491,6 +502,10 @@
         <button id="toggleHistoryBtn" type="button" class="history-toggle-btn">▼</button>
       </div>
       <div id="historyControls">
+        <div class="week-nav-buttons">
+          <button id="prevWeekBtn" type="button">저번주</button>
+          <button id="nextWeekBtn" type="button">다음주</button>
+        </div>
         <div class="history-filter">
           <div>
             <label for="historyStartDate">시작일</label>
@@ -574,6 +589,8 @@
       historyTable: document.getElementById("historyTable"),
       historyControls: document.getElementById("historyControls"),
       toggleHistoryBtn: document.getElementById("toggleHistoryBtn"),
+      prevWeekBtn: document.getElementById("prevWeekBtn"),
+      nextWeekBtn: document.getElementById("nextWeekBtn"),
       historyStartDate: document.getElementById("historyStartDate"),
       historyEndDate: document.getElementById("historyEndDate"),
       clearHistoryFilterBtn: document.getElementById("clearHistoryFilterBtn"),
@@ -612,6 +629,19 @@
       sunday.setDate(monday.getDate() + 6);
       const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
       return { start: toISO(monday), end: toISO(sunday) };
+    }
+    function moveHistoryWeekBy(deltaWeek) {
+      const startValue = el.historyStartDate.value;
+      const endValue = el.historyEndDate.value;
+      if (!startValue || !endValue) return;
+      const start = new Date(`${startValue}T00:00:00`);
+      const end = new Date(`${endValue}T00:00:00`);
+      start.setDate(start.getDate() + (7 * deltaWeek));
+      end.setDate(end.getDate() + (7 * deltaWeek));
+      const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      el.historyStartDate.value = toISO(start);
+      el.historyEndDate.value = toISO(end);
+      render();
     }
     function formatMonthTitle(monthValue) {
       const [year, month] = monthValue.split("-").map(Number);
@@ -1411,6 +1441,8 @@
         el.historyEndDate.value = "";
         render();
       });
+      el.prevWeekBtn.addEventListener("click", () => moveHistoryWeekBy(-1));
+      el.nextWeekBtn.addEventListener("click", () => moveHistoryWeekBy(1));
       el.toggleHistoryBtn.addEventListener("click", () => {
         isHistoryCollapsed = !isHistoryCollapsed;
         renderHistoryVisibility();
