@@ -704,6 +704,19 @@
       el.historyEndDate.value = toISO(end);
       render();
     }
+    function setHistoryWeekByDate(dateValue) {
+      if (!dateValue) return;
+      const target = new Date(`${dateValue}T00:00:00`);
+      const day = target.getDay(); // 0: Sun ... 6: Sat
+      const diffToMonday = day === 0 ? -6 : 1 - day;
+      const monday = new Date(target);
+      monday.setDate(target.getDate() + diffToMonday);
+      const sunday = new Date(monday);
+      sunday.setDate(monday.getDate() + 6);
+      const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      el.historyStartDate.value = toISO(monday);
+      el.historyEndDate.value = toISO(sunday);
+    }
     function getHistoryWeekLabel() {
       if (!el.historyStartDate.value || !el.historyEndDate.value) return "-";
       const start = new Date(`${el.historyStartDate.value}T00:00:00`);
@@ -1439,6 +1452,7 @@
         cell.addEventListener("click", () => {
           selectedCalendarDate = date;
           el.workDate.value = date;
+          setHistoryWeekByDate(date);
           render();
         });
         cell.addEventListener("dragover", (e) => {
