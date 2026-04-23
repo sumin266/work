@@ -508,9 +508,9 @@
     <section id="scheduleSection" class="card">
       <h2 id="scheduleTitle">정기 스케줄</h2>
       <div id="scheduleForm" class="schedule-form-collapsed">
-        <label id="scheduleInputLabel" for="scheduleInput">정기 입력 (요일 HMM)</label>
+        <label id="scheduleInputLabel" for="scheduleInput">정기 입력 (요일+근무시간)</label>
         <input id="scheduleInput" type="text" />
-        <label id="scheduleWorkRangeLabel" for="scheduleWorkRange">근무 시간 메모</label>
+        <label id="scheduleWorkRangeLabel" for="scheduleWorkRange">출근부 기재 시간 (선택)</label>
         <input id="scheduleWorkRange" type="text" />
         <button id="saveScheduleBtn" type="button">등록 저장</button>
       </div>
@@ -702,6 +702,7 @@
       const toISO = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
       el.historyStartDate.value = toISO(start);
       el.historyEndDate.value = toISO(end);
+      clearEntryDraftInputs();
       render();
     }
     function setHistoryWeekByDate(dateValue) {
@@ -750,6 +751,7 @@
       const [year, month] = el.monthPicker.value.split("-").map(Number);
       const d = new Date(year, month - 1 + delta, 1);
       el.monthPicker.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+      clearEntryDraftInputs();
       render();
     }
     function safeLoad(key, fallback) {
@@ -778,6 +780,7 @@
       return {
         records: loadRecords(),
         schedules: loadSchedules(),
+        workSchedules: loadWorkSchedules(),
         excluded: loadExcluded()
       };
     }
@@ -785,6 +788,7 @@
       isApplyingRemoteState = true;
       saveRecords(state.records || []);
       saveSchedules(state.schedules || []);
+      saveWorkSchedules(state.workSchedules || []);
       saveExcluded(state.excluded || []);
       isApplyingRemoteState = false;
       render();
@@ -1029,15 +1033,19 @@
       return null;
     }
 
-    function parseWeekdayAndTimeInput(text) {
+    function parseWeekdayAndWorkRangeInput(text) {
       const src = normalizeRangeText(text);
-      const m = src.match(/^([월화수목금토일])(\d{1}|\d{3})$/);
+      const m = src.match(/^([월화수목금토일])(.+)$/);
       if (!m) return null;
       const map = { 일: 0, 월: 1, 화: 2, 수: 3, 목: 4, 금: 5, 토: 6 };
       const weekday = map[m[1]];
-      const minutes = parseCafeTimeToMinutes(m[2]);
-      if (minutes == null || minutes <= 0) return null;
-      return { weekday, minutes };
+      const workRangeParsed = parseTimeRange(m[2]);
+      if (!workRangeParsed) return null;
+      return {
+        weekday,
+        minutes: workRangeParsed.minutes,
+        workRange: workRangeParsed.normalized
+      };
     }
     function getActiveScheduleCategory() {
       return el.category.value === "work" ? "work" : "cafe";
@@ -1094,18 +1102,19 @@
       }
       if (category === "work") {
         el.scheduleTitle.textContent = "근로 정기 스케줄";
-        el.scheduleInputLabel.textContent = "정기 입력 (요일 + 실근무 HMM)";
-        el.scheduleWorkRangeLabel.textContent = "출근부 기재 시간";
+        el.scheduleInputLabel.textContent = "정기 입력 (요일+실근무 시간구간)";
+        el.scheduleWorkRangeLabel.textContent = "출근부 기재 시간 (선택)";
       } else {
         el.scheduleTitle.textContent = "카페알바 정기 스케줄";
-        el.scheduleInputLabel.textContent = "정기 입력 (요일 HMM)";
-        el.scheduleWorkRangeLabel.textContent = "근무 시간 메모";
+        el.scheduleInputLabel.textContent = "정기 입력 (요일+근무시간 구간)";
+        el.scheduleWorkRangeLabel.textContent = "추가 메모 (선택)";
       }
       if (category === "work") {
         el.helper.textContent = "근로는 실 근무 시간을 기준으로 급여 계산합니다.";
       } else {
         el.helper.textContent = "";
       }
+      renderSchedules();
     }
 
     function addRecord() {
@@ -1194,22 +1203,26 @@
       el.actualRange.value = "";
       el.attendanceRange.value = "";
     }
+    function clearEntryDraftInputs() {
+      el.cafeTimeInput.value = "";
+      el.actualRange.value = "";
+      el.attendanceRange.value = "";
+      el.sideAmount.value = "0";
+      el.sideMemo.value = "";
+    }
 
     function addSchedule() {
       const active = getActiveScheduleCategory();
-      const parsed = parseWeekdayAndTimeInput(el.scheduleInput.value);
+      const parsed = parseWeekdayAndWorkRangeInput(el.scheduleInput.value);
       if (!parsed) return alert("정기 입력 형식을 확인해주세요.");
       if (active === "cafe") {
-        const workRangeParsed = el.scheduleWorkRange.value ? parseTimeRange(el.scheduleWorkRange.value) : null;
-        if (el.scheduleWorkRange.value && !workRangeParsed) {
-          return alert("근무 시간 메모 형식을 확인해주세요.");
-        }
         const schedules = loadSchedules();
         schedules.push({
           id: `cafe-${crypto.randomUUID()}`,
           weekday: parsed.weekday,
           minutes: parsed.minutes,
-          workRange: workRangeParsed ? workRangeParsed.normalized : ""
+          workRange: parsed.workRange,
+          note: String(el.scheduleWorkRange.value || "").trim()
         });
         saveSchedules(schedules);
       } else {
@@ -1222,6 +1235,7 @@
           id: `work-${crypto.randomUUID()}`,
           weekday: parsed.weekday,
           actualMinutes: parsed.minutes,
+          actualRange: parsed.workRange,
           attendanceRange: attendanceParsed ? attendanceParsed.normalized : `동일(${minutesToText(parsed.minutes)})`
         });
         saveWorkSchedules(schedules);
@@ -1307,6 +1321,7 @@
             date,
             category: "work",
             actualMinutes: s.actualMinutes,
+            actualRange: s.actualRange || "",
             attendanceRange: s.attendanceRange || `동일(${minutesToText(s.actualMinutes)})`,
             generatedBySchedule: true,
             scheduleId: s.id
@@ -1333,10 +1348,12 @@
         chip.className = "chip";
         if (active === "work") {
           const attendanceText = s.attendanceRange ? ` / ${s.attendanceRange}` : "";
-          chip.innerHTML = `${WEEKDAY_LABEL[s.weekday]}요일 실근무 ${minutesToText(s.actualMinutes)}${attendanceText} <button data-id="${s.id}" data-cat="work" type="button">삭제</button>`;
+          const actualText = s.actualRange ? `(${s.actualRange}) ` : "";
+          chip.innerHTML = `${WEEKDAY_LABEL[s.weekday]}요일 ${actualText}실근무 ${minutesToText(s.actualMinutes)}${attendanceText} <button data-id="${s.id}" data-cat="work" type="button">삭제</button>`;
         } else {
           const workRangeText = s.workRange ? ` (${s.workRange})` : "";
-          chip.innerHTML = `${WEEKDAY_LABEL[s.weekday]}요일 ${minutesToText(s.minutes)}${workRangeText} <button data-id="${s.id}" data-cat="cafe" type="button">삭제</button>`;
+          const noteText = s.note ? ` - ${s.note}` : "";
+          chip.innerHTML = `${WEEKDAY_LABEL[s.weekday]}요일 ${minutesToText(s.minutes)}${workRangeText}${noteText} <button data-id="${s.id}" data-cat="cafe" type="button">삭제</button>`;
         }
         el.scheduleList.appendChild(chip);
       });
@@ -1452,6 +1469,7 @@
         cell.addEventListener("click", () => {
           selectedCalendarDate = date;
           el.workDate.value = date;
+          clearEntryDraftInputs();
           setHistoryWeekByDate(date);
           render();
         });
@@ -1617,7 +1635,6 @@
       el.historyWeekLabel.textContent = getHistoryWeekLabel();
       renderHistoryVisibility();
       renderScheduleFormVisibility();
-      renderSchedules();
       toggleInputsByCategory();
     }
 
@@ -1633,13 +1650,14 @@
       el.categoryButtons.forEach((btn) => {
         btn.addEventListener("click", () => {
           el.category.value = btn.dataset.category;
+          clearEntryDraftInputs();
           toggleInputsByCategory();
         });
       });
       el.minimumWage.addEventListener("input", render);
       el.monthPicker.addEventListener("change", render);
       el.workDate.addEventListener("change", () => {
-        if (el.category.value === "work") clearWorkDraftInputs();
+        clearEntryDraftInputs();
       });
       el.connectCloudBtn.addEventListener("click", async () => {
         await connectCloud();
