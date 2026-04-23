@@ -320,11 +320,31 @@
     .week-nav-buttons {
       display: flex;
       gap: 8px;
+      align-items: center;
     }
     .week-nav-buttons button {
       width: auto;
-      padding: 8px 12px;
-      background: #374151;
+      padding: 6px 10px;
+      background: transparent;
+      color: #374151;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      font-size: 15px;
+      line-height: 1;
+    }
+    .week-nav-buttons button:hover {
+      border-color: #d1d5db;
+    }
+    .history-week-label {
+      font-size: 13px;
+      color: #fff;
+      background: #111827;
+      border: 1px solid #111827;
+      border-radius: 999px;
+      padding: 6px 12px;
+      min-width: 104px;
+      text-align: center;
+      font-weight: 700;
     }
     .history-filter > div {
       min-width: 150px;
@@ -529,8 +549,9 @@
       <div id="historyControls">
         <div class="history-top-row">
           <div class="week-nav-buttons">
-            <button id="prevWeekBtn" type="button">저번주</button>
-            <button id="nextWeekBtn" type="button">다음주</button>
+            <button id="prevWeekBtn" type="button">&lt;</button>
+            <span id="historyWeekLabel" class="history-week-label">-</span>
+            <button id="nextWeekBtn" type="button">&gt;</button>
           </div>
           <div class="history-week-summary">
             <span id="historyCafeTime">카페: 0시간 0분</span>
@@ -627,6 +648,7 @@
       toggleHistoryBtn: document.getElementById("toggleHistoryBtn"),
       prevWeekBtn: document.getElementById("prevWeekBtn"),
       nextWeekBtn: document.getElementById("nextWeekBtn"),
+      historyWeekLabel: document.getElementById("historyWeekLabel"),
       historyStartDate: document.getElementById("historyStartDate"),
       historyEndDate: document.getElementById("historyEndDate"),
       clearHistoryFilterBtn: document.getElementById("clearHistoryFilterBtn"),
@@ -681,6 +703,31 @@
       el.historyStartDate.value = toISO(start);
       el.historyEndDate.value = toISO(end);
       render();
+    }
+    function getHistoryWeekLabel() {
+      if (!el.historyStartDate.value || !el.historyEndDate.value) return "-";
+      const start = new Date(`${el.historyStartDate.value}T00:00:00`);
+      const monthCount = {};
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        const key = `${d.getFullYear()}-${d.getMonth() + 1}`;
+        monthCount[key] = (monthCount[key] || 0) + 1;
+      }
+      const dominant = Object.entries(monthCount).sort((a, b) => b[1] - a[1])[0][0];
+      const [y, m] = dominant.split("-").map(Number);
+      let representative = null;
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(start);
+        d.setDate(start.getDate() + i);
+        if (d.getFullYear() === y && d.getMonth() + 1 === m) {
+          representative = d;
+          break;
+        }
+      }
+      if (!representative) representative = new Date(y, m - 1, 1);
+      const weekNo = Math.ceil(representative.getDate() / 7);
+      return `${m}월 ${weekNo}째주`;
     }
     function formatMonthTitle(monthValue) {
       const [year, month] = monthValue.split("-").map(Number);
@@ -1553,6 +1600,7 @@
       renderCalendarRecordPanel(monthFiltered, minimumWage, monthValue);
       renderHistory(historyFiltered, minimumWage);
       renderHistoryWeekSummary(historyFiltered);
+      el.historyWeekLabel.textContent = getHistoryWeekLabel();
       renderHistoryVisibility();
       renderScheduleFormVisibility();
       renderSchedules();
