@@ -178,10 +178,7 @@
       font-size: 12px;
       font-weight: 700;
     }
-    .day.has-work {
-      color: #0f172a;
-      border-color: #cbd5e1;
-    }
+    .markers { margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap; }
     .empty { background: #f9fafb; border-style: dashed; }
     .result-grid {
       display: grid;
@@ -328,10 +325,25 @@
     .schedule-form-collapsed {
       display: none;
     }
+    .cloud-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .cloud-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .cloud-actions button {
+      width: auto;
+      padding: 8px 12px;
+    }
     @media (max-width: 900px) {
       .wrap { grid-template-columns: 1fr; }
       .result-grid { grid-template-columns: 1fr 1fr; }
-      .row-3, .row { grid-template-columns: 1fr; }
+      .row-3, .row, .cloud-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -343,13 +355,29 @@
       <div class="row">
         <div>
           <label for="minimumWage">최저시급 (원)</label>
-          <input id="minimumWage" type="number" min="0" step="10" value="10030" />
+          <input id="minimumWage" type="number" min="0" step="10" value="10320" />
         </div>
         <div>
           <label for="monthPicker">조회 월</label>
           <input id="monthPicker" type="month" />
         </div>
       </div>
+    </section>
+
+    <section class="card full">
+      <h2>Supabase 동기화</h2>
+      <div class="cloud-grid">
+        <div>
+          <label for="syncPin">4자리 PIN</label>
+          <input id="syncPin" type="password" inputmode="numeric" maxlength="4" />
+        </div>
+      </div>
+      <div class="cloud-actions">
+        <button id="connectCloudBtn" type="button">연결</button>
+        <button id="pullCloudBtn" type="button" class="subtle-btn">불러오기</button>
+        <button id="pushCloudBtn" type="button" class="subtle-btn">저장하기</button>
+      </div>
+      <p id="cloudStatus" class="small"></p>
     </section>
 
     <section class="card full">
@@ -421,7 +449,7 @@
       <p id="helper" class="small"></p>
     </section>
 
-    <section class="card">
+    <section id="scheduleSection" class="card">
       <h2>카페알바 정기 스케줄</h2>
       <div id="scheduleForm" class="schedule-form-collapsed">
         <label for="scheduleInput">정기 입력 (요일 HMM)</label>
@@ -491,10 +519,15 @@
     </section>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script>
     const STORAGE_KEY = "salary-tracker-records-v2";
     const SCHEDULE_KEY = "salary-tracker-cafe-schedules-v1";
     const EXCLUDED_KEY = "salary-tracker-schedule-excluded-v1";
+    const SUPABASE_CONFIG_KEY = "salary-tracker-supabase-config-v1";
+    const SUPABASE_TABLE = "salary_sync";
+    const DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_LOlAD7wO7xkAGDQAfd0hFA_S3CzCFlk";
+    const DEFAULT_SUPABASE_URL = "https://nuyndlttvzppcfrcjcvc.supabase.co/rest/v1/";
     const CATEGORY_META = {
       cafe: { label: "카페알바", color: "var(--cafe)" },
       work: { label: "근로", color: "var(--work)" },
@@ -505,6 +538,11 @@
     const el = {
       minimumWage: document.getElementById("minimumWage"),
       monthPicker: document.getElementById("monthPicker"),
+      syncPin: document.getElementById("syncPin"),
+      connectCloudBtn: document.getElementById("connectCloudBtn"),
+      pullCloudBtn: document.getElementById("pullCloudBtn"),
+      pushCloudBtn: document.getElementById("pushCloudBtn"),
+      cloudStatus: document.getElementById("cloudStatus"),
       workDate: document.getElementById("workDate"),
       category: document.getElementById("category"),
       cafeFields: document.getElementById("cafeFields"),
@@ -521,6 +559,7 @@
       scheduleInput: document.getElementById("scheduleInput"),
       scheduleWorkRange: document.getElementById("scheduleWorkRange"),
       scheduleForm: document.getElementById("scheduleForm"),
+      scheduleSection: document.getElementById("scheduleSection"),
       saveScheduleBtn: document.getElementById("saveScheduleBtn"),
       addScheduleBtn: document.getElementById("addScheduleBtn"),
       applyScheduleBtn: document.getElementById("applyScheduleBtn"),
@@ -548,6 +587,9 @@
     let selectedCalendarDate = null;
     let isHistoryCollapsed = false;
     let isScheduleFormOpen = false;
+    let supabaseClient = null;
+    let cloudPushTimer = null;
+    let isApplyingRemoteState = false;
 
     function fmtMoney(value) { return `${Math.round(value).toLocaleString("ko-KR")}원`; }
     function pad(n) { return String(n).padStart(2, "0"); }
@@ -573,12 +615,124 @@
       try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); }
       catch (e) { return fallback; }
     }
+    function loadCloudConfig() {
+      return safeLoad(SUPABASE_CONFIG_KEY, { pin: "" });
+    }
+    function readCloudConfigFromInputs() {
+      const pin = String(el.syncPin.value || "").trim();
+      return {
+        url: DEFAULT_SUPABASE_URL,
+        pin,
+        syncKey: pin ? `pin-${pin}` : ""
+      };
+    }
+    function saveCloudConfig(cfg) {
+      localStorage.setItem(SUPABASE_CONFIG_KEY, JSON.stringify(cfg));
+    }
+    function setCloudStatus(text, isError) {
+      el.cloudStatus.textContent = text;
+      el.cloudStatus.style.color = isError ? "#dc2626" : "var(--muted)";
+    }
+    function collectState() {
+      return {
+        records: loadRecords(),
+        schedules: loadSchedules(),
+        excluded: loadExcluded()
+      };
+    }
+    function applyState(state) {
+      isApplyingRemoteState = true;
+      saveRecords(state.records || []);
+      saveSchedules(state.schedules || []);
+      saveExcluded(state.excluded || []);
+      isApplyingRemoteState = false;
+      render();
+    }
+    function queueCloudPush() {
+      if (isApplyingRemoteState || !supabaseClient) return;
+      if (cloudPushTimer) clearTimeout(cloudPushTimer);
+      cloudPushTimer = setTimeout(() => {
+        syncToCloud();
+      }, 500);
+    }
+    async function connectCloud() {
+      const { url, pin, syncKey } = readCloudConfigFromInputs();
+      if (!pin || !syncKey) {
+        setCloudStatus("4자리 PIN을 입력해주세요.", true);
+        return false;
+      }
+      if (!/^\d{4}$/.test(pin)) {
+        setCloudStatus("PIN은 숫자 4자리여야 합니다.", true);
+        return false;
+      }
+      if (!window.supabase || !window.supabase.createClient) {
+        setCloudStatus("Supabase 라이브러리를 불러오지 못했습니다.", true);
+        return false;
+      }
+      const baseUrl = url.replace(/\/rest\/v1\/?$/, "");
+      supabaseClient = window.supabase.createClient(baseUrl, DEFAULT_SUPABASE_ANON_KEY.trim());
+      saveCloudConfig({ pin });
+      setCloudStatus("Supabase 연결 완료", false);
+      return true;
+    }
+    async function syncFromCloud() {
+      if (!supabaseClient && !(await connectCloud())) return;
+      const cfg = readCloudConfigFromInputs();
+      if (!cfg.syncKey) {
+        setCloudStatus("동기화 키를 입력해주세요.", true);
+        return;
+      }
+      const { data, error } = await supabaseClient
+        .from(SUPABASE_TABLE)
+        .select("payload")
+        .eq("sync_key", cfg.syncKey)
+        .maybeSingle();
+      if (error) {
+        setCloudStatus(`불러오기 실패: ${error.message}`, true);
+        return;
+      }
+      if (!data || !data.payload) {
+        setCloudStatus("클라우드 데이터가 없어 현재 데이터를 기준으로 시작합니다.", false);
+        return;
+      }
+      applyState(data.payload);
+      setCloudStatus("클라우드 데이터 불러오기 완료", false);
+    }
+    async function syncToCloud() {
+      if (!supabaseClient && !(await connectCloud())) return;
+      const cfg = readCloudConfigFromInputs();
+      if (!cfg.syncKey) {
+        setCloudStatus("동기화 키를 입력해주세요.", true);
+        return;
+      }
+      const payload = collectState();
+      const { error } = await supabaseClient
+        .from(SUPABASE_TABLE)
+        .upsert(
+          { sync_key: cfg.syncKey, payload, updated_at: new Date().toISOString() },
+          { onConflict: "sync_key" }
+        );
+      if (error) {
+        setCloudStatus(`저장 실패: ${error.message}`, true);
+        return;
+      }
+      setCloudStatus("클라우드 저장 완료", false);
+    }
     function loadRecords() { return safeLoad(STORAGE_KEY, []); }
-    function saveRecords(records) { localStorage.setItem(STORAGE_KEY, JSON.stringify(records)); }
+    function saveRecords(records) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+      queueCloudPush();
+    }
     function loadSchedules() { return safeLoad(SCHEDULE_KEY, []); }
-    function saveSchedules(schedules) { localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedules)); }
+    function saveSchedules(schedules) {
+      localStorage.setItem(SCHEDULE_KEY, JSON.stringify(schedules));
+      queueCloudPush();
+    }
     function loadExcluded() { return safeLoad(EXCLUDED_KEY, []); }
-    function saveExcluded(items) { localStorage.setItem(EXCLUDED_KEY, JSON.stringify(items)); }
+    function saveExcluded(items) {
+      localStorage.setItem(EXCLUDED_KEY, JSON.stringify(items));
+      queueCloudPush();
+    }
     function minutesToText(mins) { return `${Math.floor(mins / 60)}시간 ${mins % 60}분`; }
     function normalizeRangeText(text) { return String(text).replace(/\s+/g, ""); }
 
@@ -665,27 +819,6 @@
       return parsed ? parsed.minutes : null;
     }
 
-    function getRecordWeight(record) {
-      if (record.category === "cafe") return Math.max(1, Number(record.minutes) || 0);
-      if (record.category === "work") return Math.max(1, parseTimeRangeToMinutes(record.actualRange || "") || 0);
-      return Math.max(1, Number(record.amount) || 0);
-    }
-
-    function buildDayFillStyle(weightMap) {
-      const entries = Object.entries(weightMap).filter(([, v]) => v > 0);
-      if (entries.length === 0) return "";
-      const total = entries.reduce((acc, [, v]) => acc + v, 0);
-      let cursor = 0;
-      const chunks = entries.map(([cat, value]) => {
-        const start = (cursor / total) * 100;
-        cursor += value;
-        const end = (cursor / total) * 100;
-        const color = CATEGORY_META[cat].color;
-        return `${color} ${start.toFixed(2)}%, ${color} ${end.toFixed(2)}%`;
-      });
-      return `linear-gradient(90deg, ${chunks.join(", ")})`;
-    }
-
     function parseCafeTimeToMinutes(text) {
       const digits = String(text || "").replace(/\D/g, "");
       if (digits.length === 1) {
@@ -751,6 +884,11 @@
       el.cafeFields.style.display = category === "cafe" ? "grid" : "none";
       el.workFields.style.display = category === "work" ? "block" : "none";
       el.amountField.style.display = category === "side" ? "block" : "none";
+      el.scheduleSection.style.display = category === "cafe" ? "block" : "none";
+      if (category !== "cafe") {
+        isScheduleFormOpen = false;
+        renderScheduleFormVisibility();
+      }
       if (category === "work") {
         el.helper.textContent = "근로는 실 근무 시간을 기준으로 급여 계산합니다.";
       } else {
@@ -984,8 +1122,8 @@
       const startDow = firstDay.getDay();
       const groupedByDate = {};
       filteredRecords.forEach((r) => {
-        if (!groupedByDate[r.date]) groupedByDate[r.date] = { cafe: 0, work: 0, side: 0 };
-        groupedByDate[r.date][r.category] += getRecordWeight(r);
+        if (!groupedByDate[r.date]) groupedByDate[r.date] = new Set();
+        groupedByDate[r.date].add(r.category);
       });
 
       for (let i = 0; i < startDow; i++) {
@@ -995,20 +1133,23 @@
       }
       for (let day = 1; day <= lastDate; day++) {
         const date = `${monthValue}-${pad(day)}`;
-        const weightMap = groupedByDate[date] || null;
-        const hasWork = !!weightMap;
+        const categories = groupedByDate[date] ? Array.from(groupedByDate[date]) : [];
         const cell = document.createElement("div");
         cell.className = "day";
-        if (hasWork) {
-          cell.classList.add("clickable", "has-work");
-          const fill = buildDayFillStyle(weightMap);
-          if (fill) cell.style.background = fill;
-        }
+        if (categories.length > 0) cell.classList.add("clickable");
         if (selectedCalendarDate === date) cell.classList.add("selected");
-        cell.innerHTML = `<div class="day-num">${day}</div>`;
-        if (hasWork) {
+        cell.innerHTML = `<div class="day-num">${day}</div><div class="markers"></div>`;
+        const markers = cell.querySelector(".markers");
+        categories.forEach((cat) => {
+          const m = document.createElement("span");
+          m.className = "dot";
+          m.style.background = CATEGORY_META[cat].color;
+          markers.appendChild(m);
+        });
+        if (categories.length > 0) {
           cell.addEventListener("click", () => {
             selectedCalendarDate = date;
+            el.workDate.value = date;
             render();
           });
         }
@@ -1145,6 +1286,9 @@
     }
 
     function init() {
+      const cfg = loadCloudConfig();
+      el.syncPin.value = cfg.pin || "";
+      setCloudStatus("Supabase 미연결", false);
       el.workDate.value = getTodayISO();
       el.monthPicker.value = getCurrentMonthValue();
       el.categoryButtons.forEach((btn) => {
@@ -1155,6 +1299,15 @@
       });
       el.minimumWage.addEventListener("input", render);
       el.monthPicker.addEventListener("change", render);
+      el.connectCloudBtn.addEventListener("click", async () => {
+        await connectCloud();
+      });
+      el.pullCloudBtn.addEventListener("click", async () => {
+        await syncFromCloud();
+      });
+      el.pushCloudBtn.addEventListener("click", async () => {
+        await syncToCloud();
+      });
       el.addBtn.addEventListener("click", addRecord);
       el.addScheduleBtn.addEventListener("click", () => {
         isScheduleFormOpen = !isScheduleFormOpen;
@@ -1177,6 +1330,11 @@
       });
       toggleInputsByCategory();
       render();
+      if (cfg.pin) {
+        connectCloud().then((ok) => {
+          if (ok) syncFromCloud();
+        });
+      }
     }
 
     init();
