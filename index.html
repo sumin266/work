@@ -424,8 +424,12 @@
       <h2>KV 동기화 (Upstash/Vercel KV)</h2>
       <div class="cloud-grid">
         <div>
-          <label for="syncPin">4자리 PIN</label>
-          <input id="syncPin" type="password" inputmode="numeric" maxlength="4" />
+          <label for="syncUser">아이디</label>
+          <input id="syncUser" type="text" />
+        </div>
+        <div>
+          <label for="syncPin">비밀번호</label>
+          <input id="syncPin" type="password" />
         </div>
       </div>
       <div class="cloud-actions">
@@ -438,22 +442,7 @@
 
     <section class="card full">
       <h2>이번 달 결과</h2>
-      <div class="result-grid">
-        <div class="stat">
-          <b>카페알바</b>
-          <strong id="cafeTotal">0원</strong>
-          <div class="result-extra">
-            <div id="cafeWorkTime">카페 근무시간: 0시간 0분</div>
-          </div>
-        </div>
-        <div class="stat">
-          <b>근로</b>
-          <strong id="workTotal">0원</strong>
-          <div class="result-extra">
-            <div id="workWorkTime">근로 근무시간: 0시간 0분</div>
-          </div>
-        </div>
-        <div class="stat"><b>부업</b><strong id="sideTotal">0원</strong></div>
+      <div id="resultGrid" class="result-grid">
         <div class="stat">
           <b>최종 수령액</b>
           <strong id="grandTotal">0원</strong>
@@ -473,18 +462,32 @@
         </div>
         <div>
           <label>카테고리</label>
-          <input id="category" type="hidden" value="cafe" />
-          <div class="category-buttons">
-            <button type="button" class="category-btn active" data-category="cafe">카페알바</button>
-            <button type="button" class="category-btn" data-category="work">근로</button>
-            <button type="button" class="category-btn" data-category="side">부업</button>
+          <input id="category" type="hidden" value="" />
+          <div id="categoryButtons" class="category-buttons"></div>
+          <button id="toggleCategoryFormBtn" type="button" class="subtle-btn inline-btn" style="margin-top:8px;">+ 카테고리 추가</button>
+          <div id="categoryForm" class="schedule-form-collapsed" style="margin-top:10px;">
+            <label for="newCategoryTitle">카테고리 이름</label>
+            <input id="newCategoryTitle" type="text" />
+            <label for="newCategoryColor">색상</label>
+            <input id="newCategoryColor" type="color" value="#60a5fa" />
+            <label for="newCategoryWage">시급 (원)</label>
+            <input id="newCategoryWage" type="number" min="0" step="10" value="10320" />
+            <label for="newCategoryTax">세금 비율 (예: 3.3)</label>
+            <input id="newCategoryTax" type="number" min="0" step="0.1" value="3.3" />
+            <label style="display:flex;align-items:center;gap:8px;margin-top:8px;">
+              <input id="newCategoryIsDaily" type="checkbox" style="width:auto;" />
+              일급(금액 직접입력) 방식 사용
+            </label>
+            <button id="saveCategoryBtn" type="button" style="margin-top:10px;">카테고리 등록</button>
           </div>
         </div>
       </div>
 
       <div id="cafeFields">
-        <label for="cafeTimeInput">카페알바 근무시간 입력</label>
+        <label for="cafeTimeInput">근무 시간 입력 (총 근무시간)</label>
         <input id="cafeTimeInput" type="text" />
+        <label for="cafeWorkRange" style="margin-top:10px;">근무 일정 입력 (예: 13-16)</label>
+        <input id="cafeWorkRange" type="text" />
       </div>
 
       <div id="workFields" style="display:none;">
@@ -508,10 +511,8 @@
     <section id="scheduleSection" class="card">
       <h2 id="scheduleTitle">정기 스케줄</h2>
       <div id="scheduleForm" class="schedule-form-collapsed">
-        <label id="scheduleInputLabel" for="scheduleInput">정기 입력 (요일+근무시간)</label>
+        <label id="scheduleInputLabel" for="scheduleInput">정기 입력 (예: 월13-16, 화오전9-오후1)</label>
         <input id="scheduleInput" type="text" />
-        <label id="scheduleWorkRangeLabel" for="scheduleWorkRange">출근부 기재 시간 (선택)</label>
-        <input id="scheduleWorkRange" type="text" />
         <button id="saveScheduleBtn" type="button">등록 저장</button>
       </div>
       <div class="row">
@@ -531,11 +532,7 @@
           <h2 id="calendarMonthTitle" class="calendar-month-title">0000년 00월</h2>
           <button id="nextMonthBtn" type="button" class="month-nav-btn">&gt;</button>
         </div>
-        <div class="legend">
-          <span><i class="dot" style="background:var(--cafe)"></i> 카페알바</span>
-          <span><i class="dot" style="background:var(--work)"></i> 근로</span>
-          <span><i class="dot" style="background:var(--side)"></i> 부업</span>
-        </div>
+        <div id="legend" class="legend"></div>
       </div>
       <div id="calendar" class="calendar-grid"></div>
       <div id="calendarRecordPanel" class="day-records small">달력 날짜를 클릭하면 그날 기록을 여기서 삭제할 수 있어요.</div>
@@ -592,19 +589,18 @@
     const SCHEDULE_KEY = "salary-tracker-cafe-schedules-v1";
     const WORK_SCHEDULE_KEY = "salary-tracker-work-schedules-v1";
     const EXCLUDED_KEY = "salary-tracker-schedule-excluded-v1";
+    const CATEGORY_CONFIG_KEY = "salary-tracker-category-config-v1";
     const CLOUD_CONFIG_KEY = "salary-tracker-cloud-config-v1";
     const DEFAULT_UPSTASH_REST_URL = "https://fun-primate-71536.upstash.io";
     const DEFAULT_UPSTASH_REST_TOKEN = "gQAAAAAAARdwAAIgcDEyNmE5ZWNhZmIyNjE0MTBjODBlYWYzOTAzODc5ZmYyNA";
-    const CATEGORY_META = {
-      cafe: { label: "카페알바", color: "var(--cafe)" },
-      work: { label: "근로", color: "var(--work)" },
-      side: { label: "부업", color: "var(--side)" }
-    };
+    const BASE_CATEGORY_META = {};
+    let CATEGORY_META = { ...BASE_CATEGORY_META };
     const WEEKDAY_LABEL = ["일", "월", "화", "수", "목", "금", "토"];
 
     const el = {
       minimumWage: document.getElementById("minimumWage"),
       monthPicker: document.getElementById("monthPicker"),
+      syncUser: document.getElementById("syncUser"),
       syncPin: document.getElementById("syncPin"),
       connectCloudBtn: document.getElementById("connectCloudBtn"),
       pullCloudBtn: document.getElementById("pullCloudBtn"),
@@ -616,30 +612,33 @@
       workFields: document.getElementById("workFields"),
       amountField: document.getElementById("amountField"),
       cafeTimeInput: document.getElementById("cafeTimeInput"),
+      cafeWorkRange: document.getElementById("cafeWorkRange"),
       actualRange: document.getElementById("actualRange"),
       attendanceRange: document.getElementById("attendanceRange"),
       sideAmount: document.getElementById("sideAmount"),
       sideMemo: document.getElementById("sideMemo"),
       addBtn: document.getElementById("addBtn"),
       helper: document.getElementById("helper"),
-      categoryButtons: Array.from(document.querySelectorAll("button[data-category]")),
+      categoryButtonsWrap: document.getElementById("categoryButtons"),
+      toggleCategoryFormBtn: document.getElementById("toggleCategoryFormBtn"),
+      categoryForm: document.getElementById("categoryForm"),
+      newCategoryTitle: document.getElementById("newCategoryTitle"),
+      newCategoryColor: document.getElementById("newCategoryColor"),
+      newCategoryWage: document.getElementById("newCategoryWage"),
+      newCategoryTax: document.getElementById("newCategoryTax"),
+      newCategoryIsDaily: document.getElementById("newCategoryIsDaily"),
+      saveCategoryBtn: document.getElementById("saveCategoryBtn"),
       scheduleInput: document.getElementById("scheduleInput"),
       scheduleTitle: document.getElementById("scheduleTitle"),
       scheduleInputLabel: document.getElementById("scheduleInputLabel"),
-      scheduleWorkRangeLabel: document.getElementById("scheduleWorkRangeLabel"),
-      scheduleWorkRange: document.getElementById("scheduleWorkRange"),
       scheduleForm: document.getElementById("scheduleForm"),
       scheduleSection: document.getElementById("scheduleSection"),
       saveScheduleBtn: document.getElementById("saveScheduleBtn"),
       addScheduleBtn: document.getElementById("addScheduleBtn"),
       applyScheduleBtn: document.getElementById("applyScheduleBtn"),
       scheduleList: document.getElementById("scheduleList"),
-      cafeTotal: document.getElementById("cafeTotal"),
-      workTotal: document.getElementById("workTotal"),
-      sideTotal: document.getElementById("sideTotal"),
+      resultGrid: document.getElementById("resultGrid"),
       grandTotal: document.getElementById("grandTotal"),
-      cafeWorkTime: document.getElementById("cafeWorkTime"),
-      workWorkTime: document.getElementById("workWorkTime"),
       totalWorkTime: document.getElementById("totalWorkTime"),
       calendar: document.getElementById("calendar"),
       historyBody: document.getElementById("historyBody"),
@@ -657,6 +656,7 @@
       historyTotalTime: document.getElementById("historyTotalTime"),
       calendarRecordPanel: document.getElementById("calendarRecordPanel"),
       calendarMonthTitle: document.getElementById("calendarMonthTitle"),
+      legend: document.getElementById("legend"),
       prevMonthBtn: document.getElementById("prevMonthBtn"),
       nextMonthBtn: document.getElementById("nextMonthBtn")
     };
@@ -669,6 +669,8 @@
     let cloudPulledForCurrentPin = false;
     let cloudOverwriteConfirmedForCurrentPin = false;
     let currentCloudSyncKey = "";
+    let cloudExistingDataForCurrentKey = false;
+    let isCategoryFormOpen = false;
 
     function fmtMoney(value) { return `${Math.round(value).toLocaleString("ko-KR")}원`; }
     function pad(n) { return String(n).padStart(2, "0"); }
@@ -759,14 +761,16 @@
       catch (e) { return fallback; }
     }
     function loadCloudConfig() {
-      return safeLoad(CLOUD_CONFIG_KEY, { pin: "" });
+      return safeLoad(CLOUD_CONFIG_KEY, { user: "", pin: "" });
     }
     function readCloudConfigFromInputs() {
+      const user = String(el.syncUser.value || "").trim();
       const pin = String(el.syncPin.value || "").trim();
       return {
         url: DEFAULT_UPSTASH_REST_URL,
+        user,
         pin,
-        syncKey: pin ? `pin-${pin}` : ""
+        syncKey: (user && pin) ? `user-${user}__pw-${pin}` : ""
       };
     }
     function saveCloudConfig(cfg) {
@@ -781,14 +785,26 @@
         records: loadRecords(),
         schedules: loadSchedules(),
         workSchedules: loadWorkSchedules(),
+        categories: loadCategoryConfigs(),
         excluded: loadExcluded()
       };
+    }
+    function hasLocalDataToProtect() {
+      const state = collectState();
+      return (
+        (state.records || []).length > 0 ||
+        (state.schedules || []).length > 0 ||
+        (state.workSchedules || []).length > 0 ||
+        (state.categories || []).length > 0 ||
+        (state.excluded || []).length > 0
+      );
     }
     function applyState(state) {
       isApplyingRemoteState = true;
       saveRecords(state.records || []);
       saveSchedules(state.schedules || []);
       saveWorkSchedules(state.workSchedules || []);
+      saveCategoryConfigs(state.categories || []);
       saveExcluded(state.excluded || []);
       isApplyingRemoteState = false;
       render();
@@ -819,13 +835,9 @@
       return payload.result;
     }
     async function connectCloud() {
-      const { url, pin, syncKey } = readCloudConfigFromInputs();
-      if (!pin || !syncKey) {
-        setCloudStatus("4자리 PIN을 입력해주세요.", true);
-        return false;
-      }
-      if (!/^\d{4}$/.test(pin)) {
-        setCloudStatus("PIN은 숫자 4자리여야 합니다.", true);
+      const { url, user, pin, syncKey } = readCloudConfigFromInputs();
+      if (!user || !pin || !syncKey) {
+        setCloudStatus("아이디와 비밀번호를 입력해주세요.", true);
         return false;
       }
       if (!DEFAULT_UPSTASH_REST_URL || !DEFAULT_UPSTASH_REST_TOKEN) {
@@ -836,22 +848,44 @@
         setCloudStatus("Upstash URL 설정이 비어 있습니다.", true);
         return false;
       }
-      saveCloudConfig({ pin });
+      if (cloudPushTimer) {
+        clearTimeout(cloudPushTimer);
+        cloudPushTimer = null;
+      }
+      try {
+        const existing = await callKvCommand(["GET", syncKey]);
+        cloudExistingDataForCurrentKey = !!existing;
+      } catch (error) {
+        setCloudStatus(`연결 확인 실패: ${error.message}`, true);
+        return false;
+      }
+      saveCloudConfig({ user, pin });
       isCloudConnected = true;
       if (currentCloudSyncKey !== syncKey) {
         currentCloudSyncKey = syncKey;
         cloudPulledForCurrentPin = false;
         cloudOverwriteConfirmedForCurrentPin = false;
       }
-      setCloudStatus("KV 연결 완료", false);
+      if (cloudExistingDataForCurrentKey) {
+        setCloudStatus("중복 계정이 감지되었습니다. 기존 클라우드 데이터가 있습니다. 불러오기를 먼저 눌러주세요.", true);
+      } else {
+        setCloudStatus("KV 연결 완료", false);
+      }
       return true;
     }
     async function syncFromCloud() {
       if (!isCloudConnected && !(await connectCloud())) return;
       const cfg = readCloudConfigFromInputs();
       if (!cfg.syncKey) {
-        setCloudStatus("4자리 PIN을 입력해주세요.", true);
+        setCloudStatus("아이디와 비밀번호를 입력해주세요.", true);
         return;
+      }
+      if (!cloudPulledForCurrentPin && hasLocalDataToProtect()) {
+        const ok = window.confirm("현재 기기에 아직 저장하지 않은 기록이 있을 수 있습니다. 불러오기를 하면 로컬 데이터가 클라우드 데이터로 바뀔 수 있어요. 계속할까요?");
+        if (!ok) {
+          setCloudStatus("불러오기를 취소했습니다.", true);
+          return;
+        }
       }
       try {
         const raw = await callKvCommand(["GET", cfg.syncKey]);
@@ -873,7 +907,7 @@
       if (!isCloudConnected && !(await connectCloud())) return;
       const cfg = readCloudConfigFromInputs();
       if (!cfg.syncKey) {
-        setCloudStatus("4자리 PIN을 입력해주세요.", true);
+        setCloudStatus("아이디와 비밀번호를 입력해주세요.", true);
         return;
       }
       if (!cloudPulledForCurrentPin && !cloudOverwriteConfirmedForCurrentPin) {
@@ -911,6 +945,101 @@
     function saveWorkSchedules(schedules) {
       localStorage.setItem(WORK_SCHEDULE_KEY, JSON.stringify(schedules));
       queueCloudPush();
+    }
+    function loadCategoryConfigs() { return safeLoad(CATEGORY_CONFIG_KEY, []); }
+    function saveCategoryConfigs(configs) {
+      localStorage.setItem(CATEGORY_CONFIG_KEY, JSON.stringify(configs));
+      queueCloudPush();
+    }
+    function rebuildCategoryMeta() {
+      CATEGORY_META = { ...BASE_CATEGORY_META };
+      loadCategoryConfigs().forEach((c) => {
+        CATEGORY_META[c.id] = { label: c.title, color: c.color || "#60a5fa" };
+      });
+    }
+    function getCategoryConfig(id) {
+      const custom = loadCategoryConfigs().find((c) => c.id === id);
+      if (!custom) return null;
+      return {
+        id: custom.id,
+        title: custom.title,
+        color: custom.color,
+        wage: Number(custom.wage) || 0,
+        tax: Number(custom.tax) || 0,
+        isDaily: !!custom.isDaily,
+        isWorkStyle: false
+      };
+    }
+    function getCategoryMetaSafe(id) {
+      const meta = CATEGORY_META[id];
+      if (meta) return meta;
+      const cfg = getCategoryConfig(id);
+      if (cfg) return { label: cfg.title, color: cfg.color || "#9ca3af" };
+      return { label: id || "기타", color: "#9ca3af" };
+    }
+    function renderCategoryButtons() {
+      rebuildCategoryMeta();
+      const items = loadCategoryConfigs().map((c) => c.id);
+      el.categoryButtonsWrap.innerHTML = "";
+      items.forEach((id) => {
+        const cfg = getCategoryConfig(id);
+        if (!cfg) return;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "category-btn";
+        btn.dataset.category = id;
+        btn.textContent = cfg.title;
+        if (el.category.value === id) btn.classList.add("active");
+        if (btn.classList.contains("active")) {
+          btn.style.background = cfg.color;
+          btn.style.borderColor = cfg.color;
+          btn.style.color = "#fff";
+        }
+        btn.addEventListener("click", () => {
+          el.category.value = id;
+          clearEntryDraftInputs();
+          toggleInputsByCategory();
+        });
+        el.categoryButtonsWrap.appendChild(btn);
+      });
+    }
+    function renderLegend() {
+      rebuildCategoryMeta();
+      el.legend.innerHTML = "";
+      Object.entries(CATEGORY_META).forEach(([id, meta]) => {
+        const span = document.createElement("span");
+        span.innerHTML = `<i class="dot" style="background:${meta.color}"></i> ${meta.label}`;
+        el.legend.appendChild(span);
+      });
+    }
+    function renderCategoryFormVisibility() {
+      el.categoryForm.classList.toggle("schedule-form-collapsed", !isCategoryFormOpen);
+    }
+    function addCustomCategory() {
+      const title = String(el.newCategoryTitle.value || "").trim();
+      const color = String(el.newCategoryColor.value || "#60a5fa");
+      const wage = Number(el.newCategoryWage.value) || 0;
+      const tax = Number(el.newCategoryTax.value) || 0;
+      const isDaily = !!el.newCategoryIsDaily.checked;
+      if (!title) return alert("카테고리 이름을 입력해주세요.");
+      const normalizedTitle = title.toLowerCase();
+      const id = `custom_${crypto.randomUUID()}`;
+      const list = loadCategoryConfigs();
+      if (list.some((c) => String(c.title || "").toLowerCase() === normalizedTitle)) {
+        return alert("중복되는 카테고리 이름입니다. 다른 이름을 사용해주세요.");
+      }
+      list.push({ id, title, color, wage, tax, isDaily });
+      saveCategoryConfigs(list);
+      if (!el.category.value) el.category.value = id;
+      el.newCategoryTitle.value = "";
+      el.newCategoryWage.value = "10320";
+      el.newCategoryTax.value = "3.3";
+      el.newCategoryIsDaily.checked = false;
+      isCategoryFormOpen = false;
+      renderCategoryFormVisibility();
+      renderCategoryButtons();
+      renderLegend();
+      render();
     }
     function minutesToText(mins) { return `${Math.floor(mins / 60)}시간 ${mins % 60}분`; }
     function normalizeRangeText(text) { return String(text).replace(/\s+/g, ""); }
@@ -1047,9 +1176,7 @@
         workRange: workRangeParsed.normalized
       };
     }
-    function getActiveScheduleCategory() {
-      return el.category.value === "work" ? "work" : "cafe";
-    }
+    function getActiveScheduleCategory() { return el.category.value; }
 
     function formatMinutesToCafeInput(mins) {
       const total = Number(mins) || 0;
@@ -1063,14 +1190,41 @@
       if (record.actualMinutes != null) return Number(record.actualMinutes) || 0;
       return parseTimeRangeToMinutes(record.actualRange || "") || 0;
     }
+    function getHourlyCategoryMinutes(totalText, rangeText) {
+      const totalMinutes = parseCafeTimeToMinutes(totalText);
+      const rangeParsed = rangeText ? parseTimeRange(rangeText) : null;
+      if (!totalMinutes && !rangeParsed) return null;
+      return {
+        minutes: totalMinutes || (rangeParsed ? rangeParsed.minutes : 0),
+        workRange: rangeParsed ? rangeParsed.normalized : ""
+      };
+    }
 
     function getCategoryInputText(record) {
+      const cfg = getCategoryConfig(record.category);
+      if (cfg && !cfg.isWorkStyle) {
+        if (cfg.isDaily) return fmtMoney(record.amount || 0);
+        return minutesToText(record.minutes || 0);
+      }
       if (record.category === "cafe") return minutesToText(record.minutes || 0);
       if (record.category === "work") return minutesToText(getActualWorkMinutes(record));
       return fmtMoney(record.amount || 0);
     }
 
     function computeEntry(record, minimumWage) {
+      const cfg = getCategoryConfig(record.category);
+      if (cfg && !cfg.isWorkStyle) {
+        if (cfg.isDaily) {
+          const amount = Number(record.amount) || 0;
+          return { pay: amount, resultText: fmtMoney(amount) };
+        }
+        const wage = cfg.wage > 0 ? cfg.wage : minimumWage;
+        const gross = ((Number(record.minutes) || 0) / 60) * wage;
+        const taxRate = (cfg.tax || 0) > 1 ? (cfg.tax || 0) / 100 : (cfg.tax || 0);
+        const tax = gross * taxRate;
+        const net = gross - tax;
+        return { pay: net, resultText: tax > 0 ? `${fmtMoney(net)} (세금 ${fmtMoney(tax)} 차감)` : fmtMoney(net) };
+      }
       if (record.category === "side") {
         const amount = Number(record.amount) || 0;
         return { pay: amount, resultText: fmtMoney(amount) };
@@ -1088,32 +1242,28 @@
 
     function toggleInputsByCategory() {
       const category = el.category.value;
-      el.categoryButtons.forEach((btn) => {
-        btn.classList.toggle("active", btn.dataset.category === category);
-      });
-      el.cafeFields.style.display = category === "cafe" ? "grid" : "none";
-      el.workFields.style.display = category === "work" ? "block" : "none";
-      el.amountField.style.display = category === "side" ? "block" : "none";
-      const scheduleVisible = category === "cafe" || category === "work";
+      renderCategoryButtons();
+      const cfg = getCategoryConfig(category);
+      if (!cfg) {
+        el.cafeFields.style.display = "none";
+        el.workFields.style.display = "none";
+        el.amountField.style.display = "none";
+        el.scheduleSection.style.display = "none";
+        el.helper.textContent = "카테고리를 먼저 추가해주세요.";
+        return;
+      }
+      const isWorkStyle = !!(cfg && cfg.isWorkStyle);
+      const isDaily = !!(cfg && cfg.isDaily);
+      el.cafeFields.style.display = !isWorkStyle && !isDaily ? "grid" : "none";
+      el.workFields.style.display = isWorkStyle ? "block" : "none";
+      el.amountField.style.display = isDaily ? "block" : "none";
+      const scheduleVisible = !!cfg && !cfg.isDaily;
       el.scheduleSection.style.display = scheduleVisible ? "block" : "none";
       if (!scheduleVisible) {
         isScheduleFormOpen = false;
         renderScheduleFormVisibility();
       }
-      if (category === "work") {
-        el.scheduleTitle.textContent = "근로 정기 스케줄";
-        el.scheduleInputLabel.textContent = "정기 입력 (요일+실근무 시간구간)";
-        el.scheduleWorkRangeLabel.textContent = "출근부 기재 시간 (선택)";
-      } else {
-        el.scheduleTitle.textContent = "카페알바 정기 스케줄";
-        el.scheduleInputLabel.textContent = "정기 입력 (요일+근무시간 구간)";
-        el.scheduleWorkRangeLabel.textContent = "추가 메모 (선택)";
-      }
-      if (category === "work") {
-        el.helper.textContent = "근로는 실 근무 시간을 기준으로 급여 계산합니다.";
-      } else {
-        el.helper.textContent = "";
-      }
+      el.helper.textContent = "";
       renderSchedules();
     }
 
@@ -1126,14 +1276,17 @@
 
       const records = loadRecords();
       const newRecord = { id: crypto.randomUUID(), date, category, generatedBySchedule: false };
+      const cfg = getCategoryConfig(category);
+      if (!cfg) return alert("먼저 카테고리를 추가해 주세요.");
 
-      if (category === "cafe") {
-        const totalMinutes = parseCafeTimeToMinutes(el.cafeTimeInput.value);
-        if (!totalMinutes || totalMinutes <= 0) {
-          return alert("카페알바 시간은 3자리(HMM) 또는 1자리(H)로 입력해주세요. 예: 945, 9");
+      if (cfg && !cfg.isWorkStyle && !cfg.isDaily) {
+        const parsed = getHourlyCategoryMinutes(el.cafeTimeInput.value, el.cafeWorkRange.value);
+        if (!parsed || !parsed.minutes || parsed.minutes <= 0) {
+          return alert("총 근무시간(H/HMM) 또는 근무 일정(예: 13-16) 중 하나를 입력해주세요.");
         }
-        newRecord.minutes = totalMinutes;
-      } else if (category === "work") {
+        newRecord.minutes = parsed.minutes;
+        newRecord.workRange = parsed.workRange;
+      } else if (cfg && cfg.isWorkStyle) {
         const actualMinutes = parseCafeTimeToMinutes(el.actualRange.value);
         const attendanceParsed = el.attendanceRange.value
           ? parseMultipleTimeRanges(el.attendanceRange.value)
@@ -1205,6 +1358,7 @@
     }
     function clearEntryDraftInputs() {
       el.cafeTimeInput.value = "";
+      el.cafeWorkRange.value = "";
       el.actualRange.value = "";
       el.attendanceRange.value = "";
       el.sideAmount.value = "0";
@@ -1213,35 +1367,38 @@
 
     function addSchedule() {
       const active = getActiveScheduleCategory();
+      const activeCfg = getCategoryConfig(active);
+      if (!activeCfg || activeCfg.isDaily) return alert("현재 카테고리에서는 정기 스케줄을 사용할 수 없습니다.");
       const parsed = parseWeekdayAndWorkRangeInput(el.scheduleInput.value);
       if (!parsed) return alert("정기 입력 형식을 확인해주세요.");
-      if (active === "cafe") {
-        const schedules = loadSchedules();
-        schedules.push({
-          id: `cafe-${crypto.randomUUID()}`,
-          weekday: parsed.weekday,
-          minutes: parsed.minutes,
-          workRange: parsed.workRange,
-          note: String(el.scheduleWorkRange.value || "").trim()
-        });
-        saveSchedules(schedules);
-      } else {
-        const attendanceParsed = el.scheduleWorkRange.value ? parseMultipleTimeRanges(el.scheduleWorkRange.value) : null;
-        if (el.scheduleWorkRange.value && !attendanceParsed) {
-          return alert("출근부 기재 시간 형식을 확인해주세요. 여러 구간은 콤마로 구분합니다.");
-        }
+      if (activeCfg.isWorkStyle) {
         const schedules = loadWorkSchedules();
+        const dupKey = `동일(${minutesToText(parsed.minutes)})`;
+        const duplicated = schedules.some((s) => (s.category || "work") === active && s.weekday === parsed.weekday && s.actualMinutes === parsed.minutes && (s.attendanceRange || "") === dupKey);
+        if (duplicated) return alert("중복되는 스케줄입니다. 다른 시간으로 입력해주세요.");
         schedules.push({
-          id: `work-${crypto.randomUUID()}`,
+          id: `${active}-${crypto.randomUUID()}`,
+          category: active,
           weekday: parsed.weekday,
           actualMinutes: parsed.minutes,
           actualRange: parsed.workRange,
-          attendanceRange: attendanceParsed ? attendanceParsed.normalized : `동일(${minutesToText(parsed.minutes)})`
+          attendanceRange: `동일(${minutesToText(parsed.minutes)})`
         });
         saveWorkSchedules(schedules);
+      } else {
+        const schedules = loadSchedules();
+        const duplicated = schedules.some((s) => (s.category || "cafe") === active && s.weekday === parsed.weekday && s.workRange === parsed.workRange);
+        if (duplicated) return alert("중복되는 스케줄입니다. 다른 시간으로 입력해주세요.");
+        schedules.push({
+          id: `${active}-${crypto.randomUUID()}`,
+          category: active,
+          weekday: parsed.weekday,
+          minutes: parsed.minutes,
+          workRange: parsed.workRange
+        });
+        saveSchedules(schedules);
       }
       el.scheduleInput.value = "";
-      el.scheduleWorkRange.value = "";
       isScheduleFormOpen = false;
       renderScheduleFormVisibility();
       renderSchedules();
@@ -1253,19 +1410,18 @@
     }
 
     function removeSchedule(id, category) {
-      if (category === "work") {
+      if (category === "workstyle") {
         saveWorkSchedules(loadWorkSchedules().filter((s) => s.id !== id));
       } else {
         saveSchedules(loadSchedules().filter((s) => s.id !== id));
       }
-      saveExcluded(loadExcluded().filter((x) => !x.startsWith(`${id}|`)));
-      saveRecords(loadRecords().filter((r) => r.scheduleId !== id));
       render();
     }
 
     function applyCafeSchedulesToMonth() {
       const monthValue = el.monthPicker.value;
-      const schedules = loadSchedules();
+      const active = getActiveScheduleCategory();
+      const schedules = loadSchedules().filter((s) => (s.category || "cafe") === active);
       if (!monthValue || schedules.length === 0) return alert("조회 월 또는 정기 스케줄을 확인해주세요.");
 
       const [year, month] = monthValue.split("-").map(Number);
@@ -1280,13 +1436,14 @@
           if (dateObj.getDay() !== s.weekday) continue;
           const date = `${monthValue}-${pad(day)}`;
           const exKey = `${s.id}|${date}`;
-          const key = `${date}|${s.id}|cafe`;
+          const key = `${date}|${s.id}|${active}`;
           if (excluded.has(exKey) || existingKey.has(key)) continue;
           records.push({
             id: crypto.randomUUID(),
             date,
-            category: "cafe",
+            category: active,
             minutes: s.minutes,
+            workRange: s.workRange || "",
             generatedBySchedule: true,
             scheduleId: s.id
           });
@@ -1300,7 +1457,8 @@
     }
     function applyWorkSchedulesToMonth() {
       const monthValue = el.monthPicker.value;
-      const schedules = loadWorkSchedules();
+      const active = getActiveScheduleCategory();
+      const schedules = loadWorkSchedules().filter((s) => (s.category || "work") === active);
       if (!monthValue || schedules.length === 0) return alert("조회 월 또는 정기 스케줄을 확인해주세요.");
       const [year, month] = monthValue.split("-").map(Number);
       const lastDate = new Date(year, month, 0).getDate();
@@ -1314,12 +1472,12 @@
           if (dateObj.getDay() !== s.weekday) continue;
           const date = `${monthValue}-${pad(day)}`;
           const exKey = `${s.id}|${date}`;
-          const key = `${date}|${s.id}|work`;
+          const key = `${date}|${s.id}|${active}`;
           if (excluded.has(exKey) || existingKey.has(key)) continue;
           records.push({
             id: crypto.randomUUID(),
             date,
-            category: "work",
+            category: active,
             actualMinutes: s.actualMinutes,
             actualRange: s.actualRange || "",
             attendanceRange: s.attendanceRange || `동일(${minutesToText(s.actualMinutes)})`,
@@ -1337,7 +1495,14 @@
 
     function renderSchedules() {
       const active = getActiveScheduleCategory();
-      const schedules = active === "work" ? loadWorkSchedules() : loadSchedules();
+      const activeCfg = getCategoryConfig(active);
+      if (!activeCfg) {
+        el.scheduleList.innerHTML = "";
+        return;
+      }
+      const schedules = activeCfg.isWorkStyle
+        ? loadWorkSchedules().filter((s) => (s.category || "work") === active)
+        : loadSchedules().filter((s) => (s.category || "cafe") === active);
       el.scheduleList.innerHTML = "";
       if (schedules.length === 0) {
         el.scheduleList.innerHTML = `<span class="small">등록된 스케줄이 없습니다.</span>`;
@@ -1346,19 +1511,50 @@
       schedules.forEach((s) => {
         const chip = document.createElement("span");
         chip.className = "chip";
-        if (active === "work") {
+        if (activeCfg.isWorkStyle) {
           const attendanceText = s.attendanceRange ? ` / ${s.attendanceRange}` : "";
           const actualText = s.actualRange ? `(${s.actualRange}) ` : "";
-          chip.innerHTML = `${WEEKDAY_LABEL[s.weekday]}요일 ${actualText}실근무 ${minutesToText(s.actualMinutes)}${attendanceText} <button data-id="${s.id}" data-cat="work" type="button">삭제</button>`;
+          chip.innerHTML = `${WEEKDAY_LABEL[s.weekday]}요일 ${actualText}실근무 ${minutesToText(s.actualMinutes)}${attendanceText} <button data-id="${s.id}" data-cat="workstyle" type="button">변경</button> <button data-id="${s.id}" data-del-cat="workstyle" type="button">삭제</button>`;
         } else {
           const workRangeText = s.workRange ? ` (${s.workRange})` : "";
-          const noteText = s.note ? ` - ${s.note}` : "";
-          chip.innerHTML = `${WEEKDAY_LABEL[s.weekday]}요일 ${minutesToText(s.minutes)}${workRangeText}${noteText} <button data-id="${s.id}" data-cat="cafe" type="button">삭제</button>`;
+          chip.innerHTML = `${WEEKDAY_LABEL[s.weekday]}요일 ${minutesToText(s.minutes)}${workRangeText} <button data-id="${s.id}" data-cat="hourly" type="button">변경</button> <button data-id="${s.id}" data-del-cat="hourly" type="button">삭제</button>`;
         }
         el.scheduleList.appendChild(chip);
       });
-      Array.from(el.scheduleList.querySelectorAll("button[data-id]")).forEach((btn) => {
-        btn.addEventListener("click", () => removeSchedule(btn.dataset.id, btn.dataset.cat));
+      Array.from(el.scheduleList.querySelectorAll("button[data-del-cat]")).forEach((btn) => {
+        btn.addEventListener("click", () => removeSchedule(btn.dataset.id, btn.dataset.delCat));
+      });
+      Array.from(el.scheduleList.querySelectorAll("button[data-cat]")).forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const id = btn.dataset.id;
+          if (btn.dataset.cat === "workstyle") {
+            const target = loadWorkSchedules().find((s) => s.id === id && (s.category || "work") === active);
+            if (!target) return;
+            const input = window.prompt("요일+실근무 시간구간", `${WEEKDAY_LABEL[target.weekday]}${target.actualRange || ""}`);
+            if (!input) return;
+            const parsed = parseWeekdayAndWorkRangeInput(input);
+            if (!parsed) return alert("입력 형식을 확인해주세요.");
+            const arr = loadWorkSchedules();
+            const idx = arr.findIndex((s) => s.id === id && (s.category || "work") === active);
+            if (idx < 0) return;
+            arr[idx] = { ...arr[idx], weekday: parsed.weekday, actualMinutes: parsed.minutes, actualRange: parsed.workRange };
+            saveWorkSchedules(arr);
+            renderSchedules();
+          } else {
+            const target = loadSchedules().find((s) => s.id === id && (s.category || "cafe") === active);
+            if (!target) return;
+            const input = window.prompt("요일+근무시간 구간", `${WEEKDAY_LABEL[target.weekday]}${target.workRange || ""}`);
+            if (!input) return;
+            const parsed = parseWeekdayAndWorkRangeInput(input);
+            if (!parsed) return alert("입력 형식을 확인해주세요.");
+            const arr = loadSchedules();
+            const idx = arr.findIndex((s) => s.id === id && (s.category || "cafe") === active);
+            if (idx < 0) return;
+            arr[idx] = { ...arr[idx], weekday: parsed.weekday, minutes: parsed.minutes, workRange: parsed.workRange };
+            saveSchedules(arr);
+            renderSchedules();
+          }
+        });
       });
     }
 
@@ -1369,11 +1565,14 @@
         return;
       }
       filteredRecords.sort((a, b) => a.date.localeCompare(b.date)).forEach((record) => {
-        const meta = CATEGORY_META[record.category];
+        const meta = getCategoryMetaSafe(record.category);
         const result = computeEntry(record, minimumWage);
         let memo = "-";
-        if (record.category === "work") {
+        const cfg = getCategoryConfig(record.category);
+        if (cfg && cfg.isWorkStyle) {
           memo = `실근무: ${minutesToText(getActualWorkMinutes(record))}<br>출근부: ${record.attendanceRange}`;
+        } else if (record.workRange) {
+          memo = `근무일정: ${record.workRange}`;
         } else if (record.category === "side" && record.sideMemo) {
           memo = record.sideMemo;
         } else if (record.generatedBySchedule) {
@@ -1397,15 +1596,18 @@
     }
 
     function renderHistoryWeekSummary(filteredRecords) {
-      let cafeMinutes = 0;
-      let workMinutes = 0;
+      const minutesByCategory = {};
       filteredRecords.forEach((record) => {
-        if (record.category === "cafe") cafeMinutes += Number(record.minutes) || 0;
-        if (record.category === "work") workMinutes += getActualWorkMinutes(record);
+        const cfg = getCategoryConfig(record.category);
+        if (!cfg || cfg.isDaily) return;
+        const mins = cfg.isWorkStyle ? getActualWorkMinutes(record) : (Number(record.minutes) || 0);
+        minutesByCategory[record.category] = (minutesByCategory[record.category] || 0) + mins;
       });
-      const total = cafeMinutes + workMinutes;
-      el.historyCafeTime.textContent = `카페: ${minutesToText(cafeMinutes)}`;
-      el.historyWorkTime.textContent = `근로: ${minutesToText(workMinutes)}`;
+      const total = Object.values(minutesByCategory).reduce((a, b) => a + b, 0);
+      const entries = Object.entries(minutesByCategory);
+      el.historyCafeTime.textContent = entries[0] ? `${getCategoryMetaSafe(entries[0][0]).label}: ${minutesToText(entries[0][1])}` : "";
+      el.historyWorkTime.textContent = entries[1] ? `${getCategoryMetaSafe(entries[1][0]).label}: ${minutesToText(entries[1][1])}` : "";
+      if (entries.length <= 1) el.historyWorkTime.textContent = "";
       el.historyTotalTime.textContent = `총합: ${minutesToText(total)}`;
     }
 
@@ -1441,8 +1643,8 @@
       const startDow = firstDay.getDay();
       const groupedByDate = {};
       filteredRecords.forEach((r) => {
-        if (!groupedByDate[r.date]) groupedByDate[r.date] = new Set();
-        groupedByDate[r.date].add(r.category);
+        if (!groupedByDate[r.date]) groupedByDate[r.date] = [];
+        groupedByDate[r.date].push(r.category);
       });
 
       for (let i = 0; i < startDow; i++) {
@@ -1452,7 +1654,7 @@
       }
       for (let day = 1; day <= lastDate; day++) {
         const date = `${monthValue}-${pad(day)}`;
-        const categories = groupedByDate[date] ? Array.from(groupedByDate[date]) : [];
+        const categories = groupedByDate[date] ? groupedByDate[date] : [];
         const cell = document.createElement("div");
         cell.className = "day";
         cell.dataset.date = date;
@@ -1463,7 +1665,7 @@
         categories.forEach((cat) => {
           const m = document.createElement("span");
           m.className = "dot";
-          m.style.background = CATEGORY_META[cat].color;
+          m.style.background = getCategoryMetaSafe(cat).color;
           markers.appendChild(m);
         });
         cell.addEventListener("click", () => {
@@ -1507,19 +1709,20 @@
       el.calendarRecordPanel.classList.remove("small");
       el.calendarRecordPanel.innerHTML = `<strong style="font-size:14px;">${selectedCalendarDate} 기록</strong><p class="small">수정 후 저장하면 해당 날짜 기록이 바로 갱신됩니다.</p>`;
       dayRecords.forEach((record) => {
-        const meta = CATEGORY_META[record.category];
+        const meta = getCategoryMetaSafe(record.category);
         const result = computeEntry(record, minimumWage);
-        const editInputs = record.category === "cafe"
-          ? `<input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="cafeTime" type="text" value="${formatMinutesToCafeInput(record.minutes)}" />`
-          : record.category === "work"
+        const cfg = getCategoryConfig(record.category);
+        const editInputs = cfg && !cfg.isWorkStyle
+          ? (cfg.isDaily
             ? `
-              <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="actualRange" type="text" value="${formatMinutesToCafeInput(getActualWorkMinutes(record))}" />
-              <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="attendanceRange" type="text" value="${String(record.attendanceRange || "").startsWith("동일(") ? "" : (record.attendanceRange || "")}" />
-            `
-            : `
               <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="amount" type="number" min="0" value="${record.amount || 0}" />
               <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="sideMemo" type="text" value="${record.sideMemo || ""}" />
-            `;
+            `
+            : `<input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="cafeTime" type="text" value="${formatMinutesToCafeInput(record.minutes)}" />`)
+          : `
+            <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="actualRange" type="text" value="${formatMinutesToCafeInput(getActualWorkMinutes(record))}" />
+            <input class="day-record-edit-input" data-edit-id="${record.id}" data-edit-field="attendanceRange" type="text" value="${String(record.attendanceRange || "").startsWith("동일(") ? "" : (record.attendanceRange || "")}" />
+          `;
         const row = document.createElement("div");
         row.className = "day-record-item draggable";
         row.draggable = true;
@@ -1554,14 +1757,15 @@
           const id = btn.dataset.saveId;
           const target = dayRecords.find((r) => r.id === id);
           if (!target) return;
-          if (target.category === "cafe") {
+          const cfg = getCategoryConfig(target.category);
+          if (cfg && !cfg.isWorkStyle && !cfg.isDaily) {
             const input = el.calendarRecordPanel.querySelector(`[data-edit-id="${id}"][data-edit-field="cafeTime"]`);
             const minutes = parseCafeTimeToMinutes(input ? input.value : "");
             if (!minutes || minutes <= 0) return alert("카페 시간은 945 또는 9 형식으로 입력해주세요.");
             updateRecord(id, { minutes }, true);
             return;
           }
-          if (target.category === "work") {
+          if (cfg && cfg.isWorkStyle) {
             const actualInput = el.calendarRecordPanel.querySelector(`[data-edit-id="${id}"][data-edit-field="actualRange"]`);
             const attendanceInput = el.calendarRecordPanel.querySelector(`[data-edit-id="${id}"][data-edit-field="attendanceRange"]`);
             const actualMinutes = parseCafeTimeToMinutes(actualInput ? actualInput.value : "");
@@ -1589,31 +1793,45 @@
     }
 
     function renderTotals(filteredRecords, minimumWage) {
-      let cafeTotal = 0;
-      let workTotal = 0;
-      let sideTotal = 0;
-      let cafeWorkMinutes = 0;
-      let workWorkMinutes = 0;
+      const categoryTotals = {};
+      const categoryMinutes = {};
+      let totalWorkMinutes = 0;
       filteredRecords.forEach((record) => {
         const pay = computeEntry(record, minimumWage).pay;
-        if (record.category === "cafe") {
-          cafeTotal += pay;
-          cafeWorkMinutes += Number(record.minutes) || 0;
+        categoryTotals[record.category] = (categoryTotals[record.category] || 0) + pay;
+        const cfg = getCategoryConfig(record.category);
+        if (cfg && !cfg.isDaily) {
+          const mins = cfg.isWorkStyle ? getActualWorkMinutes(record) : (Number(record.minutes) || 0);
+          totalWorkMinutes += mins;
+          categoryMinutes[record.category] = (categoryMinutes[record.category] || 0) + mins;
         }
-        if (record.category === "work") {
-          workTotal += pay;
-          workWorkMinutes += getActualWorkMinutes(record);
-        }
-        if (record.category === "side") sideTotal += pay;
       });
-      const totalWorkMinutes = cafeWorkMinutes + workWorkMinutes;
-      const grand = cafeTotal + workTotal + sideTotal;
-      el.cafeTotal.textContent = fmtMoney(cafeTotal);
-      el.workTotal.textContent = fmtMoney(workTotal);
-      el.sideTotal.textContent = fmtMoney(sideTotal);
+      const grand = Object.values(categoryTotals).reduce((a, b) => a + b, 0);
+      const cards = Object.entries(categoryTotals).map(([id, amount]) => {
+        const cfg = getCategoryConfig(id);
+        const title = cfg ? cfg.title : id;
+        const minsText = categoryMinutes[id] ? `<div class="result-extra">근무시간: ${minutesToText(categoryMinutes[id])}</div>` : "";
+        return `
+          <div class="stat">
+            <b>${title}</b>
+            <strong>${fmtMoney(amount)}</strong>
+            ${minsText}
+          </div>
+        `;
+      }).join("");
+      el.resultGrid.innerHTML = `
+        ${cards}
+        <div class="stat">
+          <b>최종 수령액</b>
+          <strong id="grandTotal">0원</strong>
+          <div class="result-extra">
+            <div id="totalWorkTime">총 근무시간: 0시간 0분</div>
+          </div>
+        </div>
+      `;
+      el.grandTotal = document.getElementById("grandTotal");
+      el.totalWorkTime = document.getElementById("totalWorkTime");
       el.grandTotal.textContent = fmtMoney(grand);
-      el.cafeWorkTime.textContent = `카페 근무시간: ${minutesToText(cafeWorkMinutes)}`;
-      el.workWorkTime.textContent = `근로 근무시간: ${minutesToText(workWorkMinutes)}`;
       el.totalWorkTime.textContent = `총 근무시간: ${minutesToText(totalWorkMinutes)}`;
     }
 
@@ -1621,6 +1839,7 @@
       const records = loadRecords();
       const minimumWage = Number(el.minimumWage.value) || 0;
       const monthValue = el.monthPicker.value;
+      renderLegend();
       el.calendarMonthTitle.textContent = formatMonthTitle(monthValue);
       const monthFiltered = records.filter((r) => r.date.startsWith(monthValue));
       const historyFiltered = applyHistoryDateFilter(monthFiltered);
@@ -1640,6 +1859,7 @@
 
     function init() {
       const cfg = loadCloudConfig();
+      el.syncUser.value = cfg.user || "";
       el.syncPin.value = cfg.pin || "";
       setCloudStatus("KV 미연결", false);
       el.workDate.value = getTodayISO();
@@ -1647,13 +1867,11 @@
       const week = getCurrentWeekRangeISO();
       el.historyStartDate.value = week.start;
       el.historyEndDate.value = week.end;
-      el.categoryButtons.forEach((btn) => {
-        btn.addEventListener("click", () => {
-          el.category.value = btn.dataset.category;
-          clearEntryDraftInputs();
-          toggleInputsByCategory();
-        });
+      el.toggleCategoryFormBtn.addEventListener("click", () => {
+        isCategoryFormOpen = !isCategoryFormOpen;
+        renderCategoryFormVisibility();
       });
+      el.saveCategoryBtn.addEventListener("click", addCustomCategory);
       el.minimumWage.addEventListener("input", render);
       el.monthPicker.addEventListener("change", render);
       el.workDate.addEventListener("change", () => {
@@ -1675,7 +1893,8 @@
       });
       el.saveScheduleBtn.addEventListener("click", addSchedule);
       el.applyScheduleBtn.addEventListener("click", () => {
-        if (getActiveScheduleCategory() === "work") {
+        const activeCfg = getCategoryConfig(getActiveScheduleCategory());
+        if (activeCfg && activeCfg.isWorkStyle) {
           applyWorkSchedulesToMonth();
         } else {
           applyCafeSchedulesToMonth();
@@ -1685,10 +1904,18 @@
       el.nextMonthBtn.addEventListener("click", () => moveMonthBy(1));
       el.historyStartDate.addEventListener("change", render);
       el.historyEndDate.addEventListener("change", render);
+      el.syncUser.addEventListener("input", () => {
+        cloudPulledForCurrentPin = false;
+        cloudOverwriteConfirmedForCurrentPin = false;
+        currentCloudSyncKey = "";
+        cloudExistingDataForCurrentKey = false;
+        isCloudConnected = false;
+      });
       el.syncPin.addEventListener("input", () => {
         cloudPulledForCurrentPin = false;
         cloudOverwriteConfirmedForCurrentPin = false;
         currentCloudSyncKey = "";
+        cloudExistingDataForCurrentKey = false;
         isCloudConnected = false;
       });
       el.clearHistoryFilterBtn.addEventListener("click", () => {
@@ -1702,9 +1929,12 @@
         isHistoryCollapsed = !isHistoryCollapsed;
         renderHistoryVisibility();
       });
+      renderCategoryButtons();
+      renderLegend();
+      renderCategoryFormVisibility();
       toggleInputsByCategory();
       render();
-      if (cfg.pin) {
+      if (cfg.user && cfg.pin) {
         connectCloud().then((ok) => {
           if (ok) syncFromCloud();
         });
