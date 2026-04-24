@@ -79,11 +79,45 @@
     .category-buttons {
       display: flex;
       gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .category-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
     }
     .category-btn {
       background: #e5e7eb;
       color: #111827;
       border: 1px solid #d1d5db;
+      width: auto;
+      padding: 8px 12px;
+    }
+    .context-menu {
+      position: fixed;
+      z-index: 40;
+      min-width: 170px;
+      background: #fff;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+      padding: 6px;
+    }
+    .context-menu.hidden { display: none; }
+    .context-menu button {
+      width: 100%;
+      text-align: left;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #111827;
+      padding: 8px 10px;
+      font-weight: 500;
+    }
+    .context-menu button:hover {
+      background: #f3f4f6;
+      opacity: 1;
     }
     .category-btn.active { color: #fff; }
     .category-btn[data-category="cafe"].active {
@@ -582,6 +616,10 @@
         <tbody id="historyBody"></tbody>
       </table>
     </section>
+    <div id="categoryContextMenu" class="context-menu hidden">
+      <button id="moveCategoryBtn" type="button">다른 카테고리로 이동</button>
+      <button id="deleteCategoryBtn" type="button">카테고리 삭제</button>
+    </div>
   </div>
 
   <script>
@@ -658,7 +696,10 @@
       calendarMonthTitle: document.getElementById("calendarMonthTitle"),
       legend: document.getElementById("legend"),
       prevMonthBtn: document.getElementById("prevMonthBtn"),
-      nextMonthBtn: document.getElementById("nextMonthBtn")
+      nextMonthBtn: document.getElementById("nextMonthBtn"),
+      categoryContextMenu: document.getElementById("categoryContextMenu"),
+      moveCategoryBtn: document.getElementById("moveCategoryBtn"),
+      deleteCategoryBtn: document.getElementById("deleteCategoryBtn")
     };
     let selectedCalendarDate = null;
     let isHistoryCollapsed = false;
@@ -670,6 +711,7 @@
     let cloudOverwriteConfirmedForCurrentPin = false;
     let currentCloudSyncKey = "";
     let cloudExistingDataForCurrentKey = false;
+    let contextCategoryId = "";
     let isCategoryFormOpen = false;
 
     function fmtMoney(value) { return `${Math.round(value).toLocaleString("ko-KR")}원`; }
@@ -807,6 +849,7 @@
       saveCategoryConfigs(state.categories || []);
       saveExcluded(state.excluded || []);
       isApplyingRemoteState = false;
+      relinkOrRecoverLegacyCategories();
       render();
     }
     function queueCloudPush() {
@@ -967,8 +1010,66 @@
         wage: Number(custom.wage) || 0,
         tax: Number(custom.tax) || 0,
         isDaily: !!custom.isDaily,
-        isWorkStyle: false
+        isWorkStyle: !!custom.isWorkStyle
       };
+    }
+    function normalizeCategoryText(text) {
+      return String(text || "").trim().toLowerCase().replace(/\s+/g, "");
+    }
+    function findRelinkTargetForLegacy(legacyId, configs) {
+      const defs = {
+        cafe: { isDaily: false, keywords: ["카페", "알바", "cafe"] },
+        work: { isDaily: false, keywords: ["근로", "work", "직장"] },
+        side: { isDaily: true, keywords: ["부업", "side", "투잡"] }
+      };
+      const def = defs[legacyId];
+      if (!def) return null;
+      return configs.find((c) => {
+        if (!!c.isDaily !== def.isDaily) return false;
+        const normalizedTitle = normalizeCategoryText(c.title);
+        return def.keywords.some((k) => normalizedTitle.includes(normalizeCategoryText(k)));
+      }) || null;
+    }
+    function relinkOrRecoverLegacyCategories() {
+      const configs = loadCategoryConfigs();
+      if (!configs.length) return;
+      let records = loadRecords();
+      let schedules = loadSchedules();
+      let workSchedules = loadWorkSchedules();
+      let nextConfigs = [...configs];
+      let changedRecords = false;
+      let changedSchedules = false;
+      let changedWorkSchedules = false;
+      let changedConfigs = false;
+      const legacyDefaults = {
+        cafe: { id: "cafe", title: "카페알바", color: "#facc15", wage: 10320, tax: 0.9, isDaily: false, isWorkStyle: false },
+        work: { id: "work", title: "근로", color: "#f9a8d4", wage: 10320, tax: 0, isDaily: false, isWorkStyle: true },
+        side: { id: "side", title: "부업", color: "#22c55e", wage: 0, tax: 0, isDaily: true, isWorkStyle: false }
+      };
+      ["cafe", "work", "side"].forEach((legacyId) => {
+        const hasLegacyRecords = records.some((r) => r.category === legacyId);
+        const hasLegacySchedules = schedules.some((s) => (s.category || "cafe") === legacyId) || workSchedules.some((s) => (s.category || "work") === legacyId);
+        const hasLegacyData = hasLegacyRecords || hasLegacySchedules;
+        if (!hasLegacyData) return;
+        const alreadyExists = nextConfigs.some((c) => c.id === legacyId);
+        if (alreadyExists) return;
+        const target = findRelinkTargetForLegacy(legacyId, nextConfigs);
+        if (target) {
+          records = records.map((r) => (r.category === legacyId ? { ...r, category: target.id } : r));
+          schedules = schedules.map((s) => ((s.category || "cafe") === legacyId ? { ...s, category: target.id } : s));
+          workSchedules = workSchedules.map((s) => ((s.category || "work") === legacyId ? { ...s, category: target.id } : s));
+          changedRecords = true;
+          changedSchedules = true;
+          changedWorkSchedules = true;
+          return;
+        }
+        nextConfigs.push(legacyDefaults[legacyId]);
+        changedConfigs = true;
+      });
+      if (changedRecords) saveRecords(records);
+      if (changedSchedules) saveSchedules(schedules);
+      if (changedWorkSchedules) saveWorkSchedules(workSchedules);
+      if (changedConfigs) saveCategoryConfigs(nextConfigs);
     }
     function getCategoryMetaSafe(id) {
       const meta = CATEGORY_META[id];
@@ -984,6 +1085,8 @@
       items.forEach((id) => {
         const cfg = getCategoryConfig(id);
         if (!cfg) return;
+        const item = document.createElement("div");
+        item.className = "category-item";
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "category-btn";
@@ -1000,7 +1103,12 @@
           clearEntryDraftInputs();
           toggleInputsByCategory();
         });
-        el.categoryButtonsWrap.appendChild(btn);
+        btn.addEventListener("contextmenu", (e) => {
+          e.preventDefault();
+          openCategoryContextMenu(e.clientX, e.clientY, id);
+        });
+        item.appendChild(btn);
+        el.categoryButtonsWrap.appendChild(item);
       });
     }
     function renderLegend() {
@@ -1040,6 +1148,89 @@
       renderCategoryButtons();
       renderLegend();
       render();
+    }
+    function deleteCategory(id) {
+      const list = loadCategoryConfigs();
+      const target = list.find((c) => c.id === id);
+      if (!target) return;
+      if (list.length <= 1) {
+        alert("카테고리는 최소 1개 이상 있어야 합니다.");
+        return;
+      }
+      const records = loadRecords();
+      const schedules = loadSchedules();
+      const workSchedules = loadWorkSchedules();
+      const recordCount = records.filter((r) => r.category === id).length;
+      const scheduleToDelete = schedules.filter((s) => (s.category || "cafe") === id);
+      const workScheduleToDelete = workSchedules.filter((s) => (s.category || "work") === id);
+      const msg = `${target.title} 카테고리를 삭제할까요?\n관련 기록 ${recordCount}개, 정기 스케줄 ${scheduleToDelete.length + workScheduleToDelete.length}개도 함께 삭제됩니다.`;
+      if (!window.confirm(msg)) return;
+      const remainList = list.filter((c) => c.id !== id);
+      const remainRecords = records.filter((r) => r.category !== id);
+      const remainSchedules = schedules.filter((s) => (s.category || "cafe") !== id);
+      const remainWorkSchedules = workSchedules.filter((s) => (s.category || "work") !== id);
+      const removedScheduleIds = new Set([...scheduleToDelete, ...workScheduleToDelete].map((s) => s.id));
+      const remainExcluded = loadExcluded().filter((key) => !removedScheduleIds.has(String(key).split("|")[0]));
+      saveCategoryConfigs(remainList);
+      saveRecords(remainRecords);
+      saveSchedules(remainSchedules);
+      saveWorkSchedules(remainWorkSchedules);
+      saveExcluded(remainExcluded);
+      if (el.category.value === id) {
+        el.category.value = remainList[0] ? remainList[0].id : "";
+      }
+      toggleInputsByCategory();
+      render();
+    }
+    function moveCategoryData(sourceId, targetId) {
+      if (!sourceId || !targetId || sourceId === targetId) return;
+      const records = loadRecords().map((r) => (r.category === sourceId ? { ...r, category: targetId } : r));
+      const schedules = loadSchedules().map((s) => ((s.category || "cafe") === sourceId ? { ...s, category: targetId } : s));
+      const workSchedules = loadWorkSchedules().map((s) => ((s.category || "work") === sourceId ? { ...s, category: targetId } : s));
+      saveRecords(records);
+      saveSchedules(schedules);
+      saveWorkSchedules(workSchedules);
+      if (el.category.value === sourceId) el.category.value = targetId;
+      render();
+    }
+    function hideCategoryContextMenu() {
+      contextCategoryId = "";
+      el.categoryContextMenu.classList.add("hidden");
+    }
+    function openCategoryContextMenu(x, y, categoryId) {
+      contextCategoryId = categoryId;
+      const menu = el.categoryContextMenu;
+      menu.classList.remove("hidden");
+      const menuWidth = menu.offsetWidth || 180;
+      const menuHeight = menu.offsetHeight || 90;
+      const left = Math.max(8, Math.min(x, window.innerWidth - menuWidth - 8));
+      const top = Math.max(8, Math.min(y, window.innerHeight - menuHeight - 8));
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    }
+    function handleMoveCategoryMenuClick() {
+      if (!contextCategoryId) return;
+      const source = getCategoryConfig(contextCategoryId);
+      const list = loadCategoryConfigs().filter((c) => c.id !== contextCategoryId);
+      if (!source || list.length === 0) {
+        hideCategoryContextMenu();
+        return;
+      }
+      const optionsText = list.map((c, i) => `${i + 1}. ${c.title}`).join("\n");
+      const input = window.prompt(`${source.title}의 기록을 옮길 카테고리 번호를 입력해주세요.\n\n${optionsText}`);
+      if (!input) {
+        hideCategoryContextMenu();
+        return;
+      }
+      const index = Number(input) - 1;
+      const target = list[index];
+      if (!target) {
+        alert("올바른 번호를 입력해주세요.");
+        hideCategoryContextMenu();
+        return;
+      }
+      moveCategoryData(contextCategoryId, target.id);
+      hideCategoryContextMenu();
     }
     function minutesToText(mins) { return `${Math.floor(mins / 60)}시간 ${mins % 60}분`; }
     function normalizeRangeText(text) { return String(text).replace(/\s+/g, ""); }
@@ -1859,6 +2050,7 @@
 
     function init() {
       const cfg = loadCloudConfig();
+      relinkOrRecoverLegacyCategories();
       el.syncUser.value = cfg.user || "";
       el.syncPin.value = cfg.pin || "";
       setCloudStatus("KV 미연결", false);
@@ -1872,6 +2064,19 @@
         renderCategoryFormVisibility();
       });
       el.saveCategoryBtn.addEventListener("click", addCustomCategory);
+      el.moveCategoryBtn.addEventListener("click", handleMoveCategoryMenuClick);
+      el.deleteCategoryBtn.addEventListener("click", () => {
+        if (!contextCategoryId) return;
+        const deleteId = contextCategoryId;
+        hideCategoryContextMenu();
+        deleteCategory(deleteId);
+      });
+      document.addEventListener("click", (e) => {
+        if (!el.categoryContextMenu.contains(e.target)) hideCategoryContextMenu();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") hideCategoryContextMenu();
+      });
       el.minimumWage.addEventListener("input", render);
       el.monthPicker.addEventListener("change", render);
       el.workDate.addEventListener("change", () => {
@@ -1929,6 +2134,10 @@
         isHistoryCollapsed = !isHistoryCollapsed;
         renderHistoryVisibility();
       });
+      const categoryList = loadCategoryConfigs();
+      if ((!el.category.value || !categoryList.some((c) => c.id === el.category.value)) && categoryList.length > 0) {
+        el.category.value = categoryList[0].id;
+      }
       renderCategoryButtons();
       renderLegend();
       renderCategoryFormVisibility();
