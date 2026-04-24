@@ -617,6 +617,7 @@
       </table>
     </section>
     <div id="categoryContextMenu" class="context-menu hidden">
+      <button id="renameCategoryBtn" type="button">이름 변경</button>
       <button id="moveCategoryBtn" type="button">다른 카테고리로 이동</button>
       <button id="deleteCategoryBtn" type="button">카테고리 삭제</button>
     </div>
@@ -698,6 +699,7 @@
       prevMonthBtn: document.getElementById("prevMonthBtn"),
       nextMonthBtn: document.getElementById("nextMonthBtn"),
       categoryContextMenu: document.getElementById("categoryContextMenu"),
+      renameCategoryBtn: document.getElementById("renameCategoryBtn"),
       moveCategoryBtn: document.getElementById("moveCategoryBtn"),
       deleteCategoryBtn: document.getElementById("deleteCategoryBtn")
     };
@@ -1193,6 +1195,23 @@
       if (el.category.value === sourceId) el.category.value = targetId;
       render();
     }
+    function renameCategory(id) {
+      const list = loadCategoryConfigs();
+      const target = list.find((c) => c.id === id);
+      if (!target) return;
+      const input = window.prompt("새 카테고리 이름을 입력해주세요.", target.title || "");
+      if (!input) return;
+      const title = String(input).trim();
+      if (!title) return alert("카테고리 이름을 입력해주세요.");
+      const normalized = title.toLowerCase();
+      const duplicated = list.some((c) => c.id !== id && String(c.title || "").toLowerCase() === normalized);
+      if (duplicated) return alert("중복되는 카테고리 이름입니다. 다른 이름을 사용해주세요.");
+      const next = list.map((c) => (c.id === id ? { ...c, title } : c));
+      saveCategoryConfigs(next);
+      renderCategoryButtons();
+      renderLegend();
+      render();
+    }
     function hideCategoryContextMenu() {
       contextCategoryId = "";
       el.categoryContextMenu.classList.add("hidden");
@@ -1231,6 +1250,12 @@
       }
       moveCategoryData(contextCategoryId, target.id);
       hideCategoryContextMenu();
+    }
+    function handleRenameCategoryMenuClick() {
+      if (!contextCategoryId) return;
+      const targetId = contextCategoryId;
+      hideCategoryContextMenu();
+      renameCategory(targetId);
     }
     function minutesToText(mins) { return `${Math.floor(mins / 60)}시간 ${mins % 60}분`; }
     function normalizeRangeText(text) { return String(text).replace(/\s+/g, ""); }
@@ -2064,6 +2089,7 @@
         renderCategoryFormVisibility();
       });
       el.saveCategoryBtn.addEventListener("click", addCustomCategory);
+      el.renameCategoryBtn.addEventListener("click", handleRenameCategoryMenuClick);
       el.moveCategoryBtn.addEventListener("click", handleMoveCategoryMenuClick);
       el.deleteCategoryBtn.addEventListener("click", () => {
         if (!contextCategoryId) return;
