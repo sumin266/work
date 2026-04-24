@@ -618,9 +618,11 @@
     </section>
     <div id="categoryContextMenu" class="context-menu hidden">
       <button id="renameCategoryBtn" type="button">이름 변경</button>
+      <button id="changeCategoryColorBtn" type="button">색상 변경</button>
       <button id="moveCategoryBtn" type="button">다른 카테고리로 이동</button>
       <button id="deleteCategoryBtn" type="button">카테고리 삭제</button>
     </div>
+    <input id="categoryColorPicker" type="color" style="position:fixed;left:8px;top:8px;width:1px;height:1px;opacity:0;z-index:-1;" />
   </div>
 
   <script>
@@ -700,8 +702,10 @@
       nextMonthBtn: document.getElementById("nextMonthBtn"),
       categoryContextMenu: document.getElementById("categoryContextMenu"),
       renameCategoryBtn: document.getElementById("renameCategoryBtn"),
+      changeCategoryColorBtn: document.getElementById("changeCategoryColorBtn"),
       moveCategoryBtn: document.getElementById("moveCategoryBtn"),
-      deleteCategoryBtn: document.getElementById("deleteCategoryBtn")
+      deleteCategoryBtn: document.getElementById("deleteCategoryBtn"),
+      categoryColorPicker: document.getElementById("categoryColorPicker")
     };
     let selectedCalendarDate = null;
     let isHistoryCollapsed = false;
@@ -1212,6 +1216,23 @@
       renderLegend();
       render();
     }
+    function isHexColor(value) {
+      return /^#[0-9a-fA-F]{6}$/.test(String(value || "").trim());
+    }
+    function applyCategoryColor(id, color) {
+      const list = loadCategoryConfigs();
+      const target = list.find((c) => c.id === id);
+      if (!target) return;
+      if (!isHexColor(color)) {
+        alert("올바른 색상을 선택해주세요.");
+        return;
+      }
+      const next = list.map((c) => (c.id === id ? { ...c, color } : c));
+      saveCategoryConfigs(next);
+      renderCategoryButtons();
+      renderLegend();
+      render();
+    }
     function hideCategoryContextMenu() {
       contextCategoryId = "";
       el.categoryContextMenu.classList.add("hidden");
@@ -1256,6 +1277,26 @@
       const targetId = contextCategoryId;
       hideCategoryContextMenu();
       renameCategory(targetId);
+    }
+    function handleChangeCategoryColorMenuClick() {
+      if (!contextCategoryId) return;
+      const targetId = contextCategoryId;
+      hideCategoryContextMenu();
+      const target = getCategoryConfig(targetId);
+      if (!target) return;
+      const picker = el.categoryColorPicker;
+      picker.dataset.categoryId = targetId;
+      picker.value = isHexColor(target.color) ? target.color : "#60a5fa";
+      if (typeof picker.showPicker === "function") {
+        try {
+          picker.showPicker();
+          return;
+        } catch (error) {
+          // Fallback for browsers that block showPicker in some contexts.
+        }
+      }
+      picker.focus();
+      picker.click();
     }
     function minutesToText(mins) { return `${Math.floor(mins / 60)}시간 ${mins % 60}분`; }
     function normalizeRangeText(text) { return String(text).replace(/\s+/g, ""); }
@@ -2090,6 +2131,12 @@
       });
       el.saveCategoryBtn.addEventListener("click", addCustomCategory);
       el.renameCategoryBtn.addEventListener("click", handleRenameCategoryMenuClick);
+      el.changeCategoryColorBtn.addEventListener("click", handleChangeCategoryColorMenuClick);
+      el.categoryColorPicker.addEventListener("input", () => {
+        const categoryId = el.categoryColorPicker.dataset.categoryId || "";
+        if (!categoryId) return;
+        applyCategoryColor(categoryId, el.categoryColorPicker.value);
+      });
       el.moveCategoryBtn.addEventListener("click", handleMoveCategoryMenuClick);
       el.deleteCategoryBtn.addEventListener("click", () => {
         if (!contextCategoryId) return;
